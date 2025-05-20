@@ -11,6 +11,9 @@ from handlers import start, registration, tasks, assign_specialist
 
 from dotenv import load_dotenv
 import os
+from handlers import assign_executor
+
+
 
 load_dotenv()
 
@@ -25,6 +28,7 @@ dp.include_router(start.router)
 dp.include_router(registration.router)
 dp.include_router(tasks.router)
 dp.include_router(assign_specialist.router)
+dp.include_router(assign_executor.router)
 
 async def main():
     await connect_db()

@@ -1,8 +1,13 @@
 from aiogram import Router, F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from database import get_user_by_telegram_id, assign_specialist_to_section, search_specialists_by_name
 from states.assign_states import AssignSpecialist
+from database import (
+    get_user_by_telegram_id,
+    get_orders_for_gip,
+    assign_specialist_to_order_section,
+    search_specialists_by_name
+)
 from keyboards.main_menu import send_main_menu
 
 router = Router()
@@ -12,23 +17,43 @@ SECTIONS = ["Архитектура", "Конструктив", "ВК", "ОВи�
 @router.message(F.text == "📋 Управление пользователями")
 async def gip_manage(message: Message, state: FSMContext):
     user = await get_user_by_telegram_id(message.from_user.id)
-    if user and user["role"] == "гип":
-        kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text=section)] for section in SECTIONS],
-            resize_keyboard=True
-        )
-        await message.answer("Выберите раздел для назначения специалиста:", reply_markup=kb)
-        await state.set_state(AssignSpecialist.choosing_section)
-
-@router.message(AssignSpecialist.choosing_section)
-async def enter_specialist_name(message: Message, state: FSMContext):
-    section = message.text
-    if section not in SECTIONS:
-        await message.answer("Выберите раздел из клавиатуры.")
+    if not user or user["role"] != "гип":
+        await message.answer("❌ Команда доступна только для ГИПов.")
         return
 
+    orders = await get_orders_for_gip(user["telegram_id"])
+    if not orders:
+        await message.answer("❓ У вас нет активных заказов.")
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=o["title"], callback_data=f"assign_order:{o['id']}")]
+            for o in orders
+        ]
+    )
+    await message.answer("✏️ Выберите заказ:", reply_markup=keyboard)
+    await state.set_state(AssignSpecialist.choosing_order)
+
+@router.callback_query(F.data.startswith("assign_order:"))
+async def choose_section(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=section, callback_data=f"assign_section:{section}")]
+            for section in SECTIONS
+        ]
+    )
+    await callback.message.edit_text("✏️ Выберите раздел:", reply_markup=keyboard)
+    await state.set_state(AssignSpecialist.choosing_section)
+
+@router.callback_query(F.data.startswith("assign_section:"))
+async def enter_specialist_name(callback: CallbackQuery, state: FSMContext):
+    section = callback.data.split(":")[1]
     await state.update_data(section=section)
-    await message.answer("Введите имя или фамилию специалиста для поиска:")
+    await callback.message.edit_text(f"✏️ Раздел: <b>{section}</b>\n\nВведите имя или фамилию специалиста:")
     await state.set_state(AssignSpecialist.entering_specialist_name)
 
 @router.message(AssignSpecialist.entering_specialist_name)
@@ -42,29 +67,33 @@ async def search_specialist(message: Message, state: FSMContext):
 
     await state.update_data(found_specialists=matches)
 
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=spec["full_name"])] for spec in matches],
-        resize_keyboard=True
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=s["full_name"], callback_data=f"confirm_spec:{s['telegram_id']}")]
+            for s in matches
+        ]
     )
-    await message.answer("🔍 Найдено. Выберите специалиста из списка:", reply_markup=kb)
+    await message.answer("🔍 Найдено. Выберите специалиста:", reply_markup=keyboard)
     await state.set_state(AssignSpecialist.confirming_specialist)
 
-@router.message(AssignSpecialist.confirming_specialist)
-async def confirm_specialist(message: Message, state: FSMContext):
-    selected_name = message.text
+@router.callback_query(F.data.startswith("confirm_spec:"))
+async def confirm_specialist(callback: CallbackQuery, state: FSMContext):
+    specialist_id = int(callback.data.split(":")[1])
     data = await state.get_data()
-    matches = data.get("found_specialists", [])
-    section = data.get("section")
 
-    chosen = next((s for s in matches if s["full_name"] == selected_name), None)
+    section = data["section"]
+    order_id = data["order_id"]
+    matches = data.get("found_specialists", [])
+
+    chosen = next((s for s in matches if s["telegram_id"] == specialist_id), None)
     if not chosen:
-        await message.answer("❗ Специалист не найден в списке. Попробуйте снова.")
+        await callback.message.answer("❌ Специалист не найден в списке. Попробуйте снова.")
         return
 
-    await assign_specialist_to_section(section, chosen["telegram_id"])
-    await message.answer(
-        f"✅ Специалист <b>{selected_name}</b> назначен на раздел <b>{section}</b>.",
+    await assign_specialist_to_order_section(order_id, section, specialist_id)
+    await callback.message.edit_text(
+        f"✅ Специалист <b>{chosen['full_name']}</b> назначен на раздел <b>{section}</b> заказа №{order_id}.",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.clear()
-    await send_main_menu(message, role="гип")
+    await send_main_menu(callback.message, role="гип")
