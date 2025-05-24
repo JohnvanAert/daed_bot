@@ -142,4 +142,27 @@ async def assign_specialist_to_order_section(order_id: int, section: str, specia
             ON CONFLICT (order_id, section) DO UPDATE SET specialist_id = EXCLUDED.specialist_id
         """, order_id, section, specialist_id)
 
-# ...existing code...
+# Получить всех ГИПов
+async def get_all_gips():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT telegram_id FROM users WHERE role = 'гип'")
+        return [row["telegram_id"] for row in rows]
+
+async def get_all_orders():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT * FROM orders ORDER BY created_at DESC
+        """)
+        return [dict(row) for row in rows]
+
+# Удаление заказа по ID
+async def delete_order(order_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM orders WHERE id = $1", order_id)
+
+
+# Получение telegram_id заказчика по его ID
+async def get_customer_telegram_id(customer_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT telegram_id FROM customers WHERE id = $1", customer_id)
+        return row["telegram_id"] if row else None

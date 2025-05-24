@@ -4,6 +4,7 @@ def send_main_menu(message, role: str):
     if role == "гип":
         kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
             [KeyboardButton(text="📋 Управление пользователями")],
+            [KeyboardButton(text="📦 Заказы")],
             [KeyboardButton(text="📊 Аналитика")]
         ])
     elif role == "специалист":

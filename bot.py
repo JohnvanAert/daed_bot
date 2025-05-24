@@ -1,18 +1,13 @@
-# bot.py
+
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from asyncio import run
 from database import connect_db
-
-# Импортируй роутеры
-from handlers import start, registration, tasks, assign_specialist
-
+from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor
 from dotenv import load_dotenv
 import os
-from handlers import assign_executor
-
 
 
 load_dotenv()
@@ -29,6 +24,7 @@ dp.include_router(registration.router)
 dp.include_router(tasks.router)
 dp.include_router(assign_specialist.router)
 dp.include_router(assign_executor.router)
+dp.include_router(view_orders.router) 
 
 async def main():
     await connect_db()
