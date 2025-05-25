@@ -40,7 +40,7 @@ async def send_to_sketch_specialist(message: Message, state: FSMContext):
     comment = message.text.strip()
 
     order = await get_order_by_id(order_id)
-    specialist_id = await get_specialist_by_section()
+    specialist_id = await get_specialist_by_section("эп")
 
     if not specialist_id:
         await message.answer("❗ Специалист по разделу ЭП не назначен.")

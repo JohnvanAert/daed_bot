@@ -63,7 +63,12 @@ async def send_orders_to(recipient, send_method):
 async def accept_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
     await update_order_status(order_id, "approved")
-
+    original_caption = callback.message.caption or ""
+    updated_caption = original_caption + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
+    new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order_id}")]
+        ])
+    await callback.message.edit_caption(caption=updated_caption, reply_markup=new_keyboard)
     await callback.answer("Заказ принят ✅", show_alert=True)
     await callback.message.answer("✅ Заказ был принят. Теперь можно передать его эскизчику.")
 
