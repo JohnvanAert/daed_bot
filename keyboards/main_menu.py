@@ -3,8 +3,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 def send_main_menu(message, role: str, section: str = None):
     section_menus = {
         "эп": [
-            [KeyboardButton(text="📄 Мои заказы")],
-            [KeyboardButton(text="📤 Передать ГИПу на проверку")]
+            [KeyboardButton(text="📄 Мои заказы")]
         ],
         "ар": [
             [KeyboardButton(text="📄 Мои АР-задачи")],

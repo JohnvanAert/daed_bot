@@ -212,10 +212,10 @@ async def get_orders_by_specialist_id(specialist_telegram_id: int, section: str)
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT o.*
-            FROM orders o
-            JOIN order_specialist os ON os.order_id = o.id
-            JOIN users u ON u.id = os.specialist_id
-            WHERE u.telegram_id = $1 AND os.section = $2
+            FROM tasks t
+            JOIN users u ON u.telegram_id = $1
+            JOIN orders o ON o.id = t.id
+            WHERE t.specialist_id = u.telegram_id AND t.section = $2
         """, specialist_telegram_id, section)
         return [dict(row) for row in rows]
 
