@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
+from database import set_order_gip
 
 load_dotenv()
 router = Router()
@@ -63,6 +64,8 @@ async def send_orders_to(recipient, send_method):
 async def accept_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
     await update_order_status(order_id, "approved")
+    gip_id = callback.from_user.id  # получаем telegram ID ГИПа
+    await set_order_gip(order_id, gip_id)
     original_caption = callback.message.caption or ""
     updated_caption = original_caption + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[

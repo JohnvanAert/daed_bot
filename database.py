@@ -173,14 +173,15 @@ async def get_order_by_id(order_id: int):
         row = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
         return dict(row) if row else None
 
-async def get_specialist_by_section(section: str):
+async def get_specialist_by_section(order_id: int, section: str):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            SELECT telegram_id FROM users
-            WHERE role = 'специалист' AND section = $1
-        """, section.lower())
+            SELECT u.telegram_id
+            FROM order_specialists os
+            JOIN users u ON u.id = os.specialist_id
+            WHERE os.order_id = $1 AND os.section = $2
+        """, order_id, section)
         return row["telegram_id"] if row else None
-
 
 async def update_order_status(order_id: int, status: str):
     async with pool.acquire() as conn:
@@ -188,3 +189,68 @@ async def update_order_status(order_id: int, status: str):
             "UPDATE orders SET status = $1 WHERE id = $2",
             status, order_id
         )
+
+
+async def set_order_gip(order_id: int, gip_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE orders SET gip_id = $1 WHERE id = $2",
+            gip_id, order_id
+        )
+
+async def get_specialists_by_order(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT os.section, u.telegram_id, u.name
+            FROM order_specialist os
+            JOIN users u ON u.id = os.specialist_id
+            WHERE os.order_id = $1
+        """, order_id)
+        return [dict(row) for row in rows]
+
+async def get_orders_by_specialist_id(specialist_telegram_id: int, section: str):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT o.*
+            FROM orders o
+            JOIN order_specialist os ON os.order_id = o.id
+            JOIN users u ON u.id = os.specialist_id
+            WHERE u.telegram_id = $1 AND os.section = $2
+        """, specialist_telegram_id, section)
+        return [dict(row) for row in rows]
+
+
+async def get_section_specialist(section: str):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id AS specialist_id, telegram_id
+            FROM users
+            WHERE role = 'специалист' AND section = $1
+            LIMIT 1
+        """, section.lower())
+        return row
+
+async def insert_order_specialist(order_id: int, section: str, specialist_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO order_specialists (order_id, section, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, section.lower(), specialist_id)
+
+# Получить специалиста по разделу
+async def get_specialist_by_section(section: str):
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("""
+            SELECT id, telegram_id FROM users
+            WHERE role = 'специалист' AND section = $1
+            LIMIT 1
+        """, section)
+
+# Создать задачу для специалиста
+async def create_task(order_id: int, section: str, description: str, deadline: int, specialist_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO tasks (id, section, description, deadline, specialist_id, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, 'Разработка ЭП', NOW())
+        """, order_id, section, description, deadline, specialist_id)
