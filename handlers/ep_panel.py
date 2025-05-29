@@ -11,6 +11,14 @@ BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 class SubmitEpFSM(StatesGroup):
     waiting_for_file = State()
 
+def get_gip_review_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Передать заказчику", callback_data=f"gip_approve:{order_id}"),
+            InlineKeyboardButton(text="❌ Требует исправлений", callback_data=f"gip_reject:{order_id}")
+        ]
+    ])
+
 @router.message(F.text == "📄 Мои заказы")
 async def show_ep_orders(message: Message):
     orders = await get_orders_by_specialist_id(message.from_user.id, section="эп")
@@ -61,9 +69,10 @@ async def receive_ep_document(message: Message, state: FSMContext):
 
     await message.bot.send_document(
         chat_id=gip_telegram_id,
-        document=document.file_id,  # ✅ ВАЖНО!
+        document=document.file_id,
         caption=f"📩 Получен файл ЭП от специалиста по заказу: <b>{order['title']}</b>",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_gip_review_keyboard(order['id'])
     )
 
     await message.answer("✅ ЭП отправлен ГИПу на проверку.")

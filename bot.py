@@ -8,6 +8,7 @@ from database import connect_db
 from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel
 from dotenv import load_dotenv
 import os
+from handlers import gip_review
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ dp.include_router(assign_executor.router)
 dp.include_router(view_orders.router) 
 dp.include_router(assign_sketch.router)
 dp.include_router(ep_panel.router)
+dp.include_router(gip_review.router)
 
 async def main():
     await connect_db()
