@@ -214,7 +214,7 @@ async def get_orders_by_specialist_id(specialist_telegram_id: int, section: str)
             SELECT o.*
             FROM tasks t
             JOIN users u ON u.telegram_id = $1
-            JOIN orders o ON o.id = t.id
+            JOIN orders o ON o.id = t.order_id
             WHERE t.specialist_id = u.telegram_id AND t.section = $2
         """, specialist_telegram_id, section)
         return [dict(row) for row in rows]
@@ -248,9 +248,9 @@ async def get_specialist_by_section(section: str):
         """, section)
 
 # Создать задачу для специалиста
-async def create_task(order_id: int, section: str, description: str, deadline: int, specialist_id: int):
+async def create_task(order_id: int, section: str, description: str, deadline: int, specialist_id: int, status: str):
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO tasks (id, section, description, deadline, specialist_id, status, created_at)
-            VALUES ($1, $2, $3, $4, $5, 'Разработка ЭП', NOW())
-        """, order_id, section, description, deadline, specialist_id)
+            INSERT INTO tasks (order_id, section, description, deadline, specialist_id, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        """, order_id, section, description, deadline, specialist_id, status)

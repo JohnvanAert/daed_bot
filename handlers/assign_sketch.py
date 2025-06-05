@@ -45,7 +45,7 @@ async def send_to_ep_specialist(message: Message, state: FSMContext):
         await state.clear()
         return
     deadline_date = date.today() + timedelta(days=deadline_days)
-    await create_task(order_id, "эп", comment, deadline_date, specialist["telegram_id"])
+    await create_task(order_id, "эп", comment, deadline_date, specialist["telegram_id"], "Разработка ЭП")
 
     doc_path = os.path.abspath(os.path.join("..", "clientbot", order["document_url"]))
     if not os.path.exists(doc_path):
