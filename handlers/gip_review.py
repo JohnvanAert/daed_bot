@@ -52,20 +52,6 @@ async def handle_gip_approval(callback: CallbackQuery):
         await callback.message.answer("❗ Файл ЭП не найден.")
         return
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍 Всё получено", callback_data=f"customer_received:{order_id}"),
-            InlineKeyboardButton(text="📣 Есть вопросы", callback_data=f"customer_has_questions:{order_id}")
-        ]
-    ])
-
-    # ✅ Отправляем кнопки тоже через client_bot
-    await client_bot.send_message(
-        chat_id=customer_id,
-        text="❓ Уточните статус: вы получили и всё понятно?",
-        reply_markup=keyboard
-    )
-
     await callback.message.edit_reply_markup()
     await callback.message.answer("✅ Заказ передан заказчику.")
     await callback.answer("Передано заказчику ✅", show_alert=True)
@@ -157,10 +143,8 @@ async def send_docs_error_to_customer(message: Message, state: FSMContext):
 
     comment = message.text.strip()
 
-    # Создаём inline-кнопку
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📎 Отправить исправленные документы", callback_data=f"send_fixed_docs:{order_id}")]
-    ])
+    # 🔄 Обновим статус заказа
+    await update_order_status(order_id, "pending_correction")
 
     await client_bot.send_message(
         chat_id=customer_id,
@@ -168,21 +152,11 @@ async def send_docs_error_to_customer(message: Message, state: FSMContext):
             f"❗ <b>Ошибка в документах</b> по заказу <b>{order['title']}</b>:\n\n"
             f"{comment}"
         ),
-        parse_mode="HTML",
-        reply_markup=keyboard
+        parse_mode="HTML"
     )
 
     await message.answer("✉️ Комментарий отправлен заказчику.")
     await state.clear()
-
-@router.callback_query(F.data.startswith("send_fixed_docs:"))
-async def handle_fixed_docs_button(callback: CallbackQuery, state: FSMContext):
-    order_id = int(callback.data.split(":")[1])
-    await state.set_state(ReviewCorrectionFSM.waiting_for_customer_zip)
-    await state.update_data(order_id=order_id)
-
-    await callback.answer()
-    await callback.message.answer("📤 Пожалуйста, прикрепите исправленные документы в формате .zip")
 
 
 @router.callback_query(F.data.startswith("docs_accept:"))
@@ -225,20 +199,6 @@ async def receive_customer_zip(message: Message, state: FSMContext):
     
     await message.answer("✅ Спасибо! ZIP-файл передан исполнителям.")
     await state.clear()
-
-# @router.callback_query(F.data.startswith("docs_accept:"))
-# async def handle_docs_accept(callback: CallbackQuery):
-#     order_id = int(callback.data.split(":")[1])
-#     await update_order_status(order_id, "ird_received")
-
-#     updated_caption = (callback.message.caption or "") + "\n\n✅ ИРД принят."
-#     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-#         [InlineKeyboardButton(text="📤 Передать АР", callback_data=f"assign_ar:{order_id}")]
-#     ])
-
-#     await callback.message.edit_caption(caption=updated_caption, reply_markup=keyboard)
-#     await callback.answer("✅ ИРД принят", show_alert=True)
-
 
 @router.callback_query(F.data.startswith("docs_error:"))
 async def handle_docs_error(callback: CallbackQuery, state: FSMContext):

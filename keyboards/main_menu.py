@@ -6,8 +6,8 @@ def send_main_menu(message, role: str, section: str = None):
             [KeyboardButton(text="📄 Мои заказы")]
         ],
         "ар": [
-            [KeyboardButton(text="📄 Мои АР-задачи")],
-            [KeyboardButton(text="📤 Передать Рассчёт")]
+            [KeyboardButton(text="📄 Мои задачи")],
+            [KeyboardButton(text=" Нанять исполнителя")]
         ],
         "рс": [
             [KeyboardButton(text="📄 Мои РС-задачи")],
