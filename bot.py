@@ -9,6 +9,7 @@ from handlers import start, registration, tasks, assign_specialist, view_orders,
 from dotenv import load_dotenv
 import os
 from handlers import gip_review
+from handlers import ar_panel
 
 load_dotenv()
 
@@ -28,6 +29,7 @@ dp.include_router(view_orders.router)
 dp.include_router(assign_sketch.router)
 dp.include_router(ep_panel.router)
 dp.include_router(gip_review.router)
+dp.include_router(ar_panel.router)
 
 async def main():
     await connect_db()

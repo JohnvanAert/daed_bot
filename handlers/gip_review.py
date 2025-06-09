@@ -242,7 +242,7 @@ async def handle_assign_ar(callback: CallbackQuery):
         return
 
     deadline = date.today() + timedelta(days=5)
-
+    await update_order_status(order_id, "assigned_ar")
     await create_task(
         order_id=order_id,
         section="ар",
