@@ -8,3 +8,4 @@ class AssignExecutor(StatesGroup):
 # states/states.py
 class EditOrder(StatesGroup):
     waiting_for_comment = State()
+

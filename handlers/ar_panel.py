@@ -2,14 +2,21 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id
+from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id 
 import os
 from datetime import datetime, date, timedelta
-
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 class GiveTaskARFSM(StatesGroup):
     waiting_for_comment = State()
     waiting_for_deadline = State()
+
+
+class TaskAssignmentFSM(StatesGroup):
+    waiting_for_title = State()
+    waiting_for_description = State()
+    waiting_for_deadline = State()
+
 
 router = Router()
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
@@ -117,15 +124,20 @@ async def assign_ar_execs(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("ar_pick_exec:"))
 async def confirm_ar_exec(callback: CallbackQuery):
     _, order_id, exec_tg_id = callback.data.split(":")
-    specialist_tg_id = callback.from_user.id  # кто нажал — это и есть специалист
-
-    # Вызов с именованными аргументами
+    specialist_tg_id = callback.from_user.id
+    # 🔒 Проверка: не более 3 исполнителей
+    current_count = await count_executors_for_order(order_id=int(order_id))
+    if current_count >= 3:
+        await callback.answer("❗ Уже назначено 3 исполнителя для этого заказа.", show_alert=True)
+        return
+    # Назначение исполнителя
     await assign_ar_executor_to_order(
         order_id=int(order_id),
         executor_telegram_id=int(exec_tg_id),
         specialist_telegram_id=int(specialist_tg_id)
     )
 
+    # Уведомление исполнителю
     executor_telegram_id = int(exec_tg_id)
     executor_user = await get_user_by_telegram_id(executor_telegram_id)
     if executor_user:
@@ -134,7 +146,18 @@ async def confirm_ar_exec(callback: CallbackQuery):
             text=f"📌 Вам назначена новая задача по заказу #{order_id} от специалиста АР.",
         )
 
-    await callback.message.answer("✅ Исполнитель назначен.")
+    # Удаление кнопки исполнителя из сообщения
+    original_markup = callback.message.reply_markup
+    if original_markup:
+        new_buttons = []
+        for row in original_markup.inline_keyboard:
+            new_row = [btn for btn in row if callback.data not in btn.callback_data]
+            if new_row:
+                new_buttons.append(new_row)
+
+        new_markup = InlineKeyboardMarkup(inline_keyboard=new_buttons)
+        await callback.message.edit_reply_markup(reply_markup=new_markup)
+
     await callback.answer("Назначено ✅", show_alert=True)
 
 @router.callback_query(F.data.startswith("give_task_ar:"))
@@ -144,14 +167,15 @@ async def handle_give_task_ar(callback: CallbackQuery, state: FSMContext):
 
     if not executors:
         await callback.message.answer("❗ Нет назначенных исполнителей для этого заказа.")
+        await callback.answer()
         return
 
     # Сохраняем order_id в FSM
     await state.update_data(order_id=order_id)
 
-    # Показываем всех исполнителей как инлайн кнопки
+    # Показываем всех исполнителей (task_executor_id нужен для точного обновления)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=executor['username'], callback_data=f"select_ar_executor:{executor['id']}")]
+        [InlineKeyboardButton(text=executor['full_name'], callback_data=f"select_ar_executor:{executor['task_executor_id']}")]
         for executor in executors
     ])
 
@@ -175,7 +199,6 @@ async def handle_task_comment(message: Message, state: FSMContext):
     await state.set_state(GiveTaskARFSM.waiting_for_deadline)
     await message.answer("📅 Введите дедлайн в формате ГГГГ-ММ-ДД (например, 2025-06-15):")
 
-
 @router.message(GiveTaskARFSM.waiting_for_deadline)
 async def handle_task_deadline(message: Message, state: FSMContext):
     try:
@@ -188,10 +211,25 @@ async def handle_task_deadline(message: Message, state: FSMContext):
     order_id = data["order_id"]
     executor_id = data["executor_id"]
     description = data["description"]
-    specialist_id = message.from_user.id  # Текущий специалист
+    specialist_id = message.from_user.id  # Кто выдал задание
 
-    # Обновляем задачу
-    await update_task_for_executor(order_id, executor_id, description, deadline)
+    # Получаем ID задачи в task_executors
+    task_executor_id = await get_task_executor_id(order_id, executor_id)
+    await update_task_for_executor(task_executor_id, description, deadline)
+
+    # Отправляем сообщение исполнителю
+    executor = await get_user_by_telegram_id(executor_id)
+    if executor:
+        await message.bot.send_message(
+            chat_id=executor["telegram_id"],
+            text=(
+                f"📌 Вам назначена задача по заказу #{order_id}:\n\n"
+                f"<b>{data['title']}</b>\n"
+                f"{description}\n"
+                f"🕒 Дедлайн: {deadline.strftime('%Y-%m-%d')}"
+            ),
+            parse_mode="HTML"
+        )
 
     await message.answer("✅ Задание выдано исполнителю.")
     await state.clear()

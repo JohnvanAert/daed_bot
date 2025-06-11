@@ -260,10 +260,10 @@ async def create_task(order_id: int, section: str, description: str, deadline: i
 async def get_ar_executors_by_order(order_id: int):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT u.id, u.full_name, u.telegram_id
-            FROM tasks t
-            JOIN users u ON t.executor_id = u.id
-            WHERE t.order_id = $1 AND t.section = 'ар' AND t.executor_id IS NOT NULL
+            SELECT u.telegram_id, u.full_name
+            FROM task_executors te
+            JOIN users u ON te.executor_id = u.telegram_id
+            WHERE te.order_id = $1
         """, order_id)
         return [dict(row) for row in rows]
 
@@ -273,9 +273,9 @@ async def get_available_ar_executors(order_id: int):
             SELECT id, full_name, telegram_id
             FROM users
             WHERE role = 'исполнитель' AND section = 'ар'
-              AND id NOT IN (
-                  SELECT executor_id FROM tasks
-                  WHERE order_id = $1 AND section = 'ар' AND executor_id IS NOT NULL
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
               )
             LIMIT 3
         """, order_id)
@@ -293,25 +293,22 @@ async def assign_ar_executor_to_order(order_id: int, executor_telegram_id: int, 
 async def get_executors_for_order(order_id: int, section: str):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT u.id, u.full_name, u.telegram_id
+            SELECT te.id AS task_executor_id, u.full_name, u.telegram_id
             FROM task_executors te
             JOIN users u ON u.telegram_id = te.executor_id
-            WHERE te.task_id IN (
-                SELECT id FROM tasks
-                WHERE order_id = $1 AND section = $2
-            )
+            WHERE te.order_id = $1 AND u.section = $2
         """, order_id, section)
         return [dict(row) for row in rows]
 
-async def update_task_for_executor(task_id: int, executor_id: int, description: str, deadline: date):
+async def update_task_for_executor(task_executor_id: int, description: str, deadline: date):
     async with pool.acquire() as conn:
         await conn.execute("""
             UPDATE task_executors
             SET description = $1,
                 deadline = $2,
                 status = 'В работе'
-            WHERE task_id = $3 AND executor_id = $4
-        """, description, deadline, task_id, executor_id)
+            WHERE id = $3
+        """, description, deadline, task_executor_id)
 
 
 # Получить исполнителей без отдела
@@ -338,3 +335,23 @@ async def get_user_by_id(user_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
         return dict(row) if row else None
+
+
+# Подсчитать количество назначенных исполнителей на заказ
+async def count_executors_for_order(order_id: int) -> int:
+    async with pool.acquire() as conn:
+        result = await conn.fetchval("""
+            SELECT COUNT(*) FROM task_executors te
+            JOIN tasks t ON te.task_id = t.id
+            WHERE t.order_id = $1 AND t.section = 'ар'
+        """, order_id)
+        return result or 0
+
+
+async def get_task_executor_id(order_id: int, executor_id: int) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id FROM task_executors
+            WHERE order_id = $1 AND executor_id = $2
+        """, order_id, executor_id)
+        return row["id"] if row else None
