@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id 
+from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_executor_by_task_executor_id
 import os
 from datetime import datetime, date, timedelta
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -185,8 +185,21 @@ async def handle_give_task_ar(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("select_ar_executor:"))
 async def handle_select_ar_executor(callback: CallbackQuery, state: FSMContext):
-    executor_id = int(callback.data.split(":")[1])
-    await state.update_data(executor_id=executor_id)
+    task_executor_id = int(callback.data.split(":")[1])
+
+    # Получаем executor_id и order_id (сделаем запрос расширенным)
+    executor_row = await get_executor_by_task_executor_id(task_executor_id)
+    if not executor_row:
+        await callback.message.answer("❗ Не удалось найти исполнителя.")
+        return
+
+    await state.update_data(
+        task_executor_id=task_executor_id,
+        executor_id=executor_row["executor_id"],  # telegram_id
+        full_name=executor_row["full_name"],
+        order_id=executor_row["order_id"],        # 👈 добавляем сюда!
+        title=executor_row["title"]               # 👈 если нужно для сообщения
+    )
 
     await state.set_state(GiveTaskARFSM.waiting_for_comment)
     await callback.message.answer("📝 Введите описание задания:")
@@ -197,14 +210,17 @@ async def handle_select_ar_executor(callback: CallbackQuery, state: FSMContext):
 async def handle_task_comment(message: Message, state: FSMContext):
     await state.update_data(description=message.text.strip())
     await state.set_state(GiveTaskARFSM.waiting_for_deadline)
-    await message.answer("📅 Введите дедлайн в формате ГГГГ-ММ-ДД (например, 2025-06-15):")
-
+    await message.answer("📅 Введите дедлайн в днях (например, 5):")
+    
 @router.message(GiveTaskARFSM.waiting_for_deadline)
 async def handle_task_deadline(message: Message, state: FSMContext):
     try:
-        deadline = datetime.strptime(message.text.strip(), "%Y-%m-%d").date()
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+        deadline = date.today() + timedelta(days=days)
     except ValueError:
-        await message.answer("❗ Неверный формат. Введите дату как: 2025-06-15")
+        await message.answer("❗ Введите положительное число дней, например: 5")
         return
 
     data = await state.get_data()
@@ -216,7 +232,6 @@ async def handle_task_deadline(message: Message, state: FSMContext):
     # Получаем ID задачи в task_executors
     task_executor_id = await get_task_executor_id(order_id, executor_id)
     await update_task_for_executor(task_executor_id, description, deadline)
-
     # Отправляем сообщение исполнителю
     executor = await get_user_by_telegram_id(executor_id)
     if executor:
@@ -226,7 +241,7 @@ async def handle_task_deadline(message: Message, state: FSMContext):
                 f"📌 Вам назначена задача по заказу #{order_id}:\n\n"
                 f"<b>{data['title']}</b>\n"
                 f"{description}\n"
-                f"🕒 Дедлайн: {deadline.strftime('%Y-%m-%d')}"
+                f"🕒 Дедлайн: {deadline.strftime('%Y-%m-%d')} (через {days} дней)"
             ),
             parse_mode="HTML"
         )

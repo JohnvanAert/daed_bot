@@ -5,7 +5,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from asyncio import run
 from database import connect_db
-from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel
+from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor
 from dotenv import load_dotenv
 import os
 from handlers import gip_review
@@ -30,7 +30,7 @@ dp.include_router(assign_sketch.router)
 dp.include_router(ep_panel.router)
 dp.include_router(gip_review.router)
 dp.include_router(ar_panel.router)
-
+dp.include_router(ar_executor.router)
 async def main():
     await connect_db()
     await bot.delete_webhook(drop_pending_updates=True)

@@ -355,3 +355,71 @@ async def get_task_executor_id(order_id: int, executor_id: int) -> int:
             WHERE order_id = $1 AND executor_id = $2
         """, order_id, executor_id)
         return row["id"] if row else None
+
+
+async def get_tasks_for_executor(executor_telegram_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                te.id AS task_executor_id,
+                o.title,
+                te.description,
+                te.deadline,
+                te.status,
+                o.document_url
+            FROM task_executors te
+            JOIN orders o ON o.id = te.order_id
+            WHERE te.executor_id = $1
+            ORDER BY te.deadline
+        """, executor_telegram_id)
+        return [dict(row) for row in rows]
+
+async def get_executor_by_task_executor_id(task_executor_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT te.executor_id, u.full_name, te.order_id, o.title
+            FROM task_executors te
+            JOIN users u ON u.telegram_id = te.executor_id
+            JOIN orders o ON o.id = te.order_id
+            WHERE te.id = $1
+        """, task_executor_id)
+        return dict(row) if row else None
+
+
+async def mark_task_as_submitted(task_executor_id: int, file_url: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE task_executors
+            SET status = 'Ожидает проверки',
+                submission_file = $1
+            WHERE id = $2
+        """, file_url, task_executor_id)
+
+
+async def get_specialist_by_task_executor_id(task_executor_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT t.specialist_id, u.full_name
+            FROM task_executors te
+            JOIN tasks t ON te.order_id = t.order_id AND t.section = 'ар'
+            JOIN users u ON u.telegram_id = t.specialist_id
+            WHERE te.id = $1
+            LIMIT 1
+        """, task_executor_id)
+        return dict(row) if row else None
+
+async def update_task_status(task_executor_id: int, status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE task_executors
+            SET status = $1
+            WHERE id = $2
+        """, status, task_executor_id)
+
+async def get_executor_by_task_executor_id(task_executor_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT executor_id FROM task_executors
+            WHERE id = $1
+        """, task_executor_id)
+        return dict(row) if row else None
