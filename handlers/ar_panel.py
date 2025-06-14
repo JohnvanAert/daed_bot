@@ -2,10 +2,11 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_executor_by_task_executor_id
+from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_executor_by_task_executor_id, save_ar_file_path_to_tasks
 import os
 from datetime import datetime, date, timedelta
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram import Bot
 
 class GiveTaskARFSM(StatesGroup):
     waiting_for_comment = State()
@@ -19,7 +20,7 @@ class TaskAssignmentFSM(StatesGroup):
 
 
 router = Router()
-BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+TEMP_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
 
 class SubmitArFSM(StatesGroup):
     waiting_for_file = State()
@@ -27,8 +28,8 @@ class SubmitArFSM(StatesGroup):
 def get_gip_review_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Передать заказчику", callback_data=f"gip_approve:{order_id}"),
-            InlineKeyboardButton(text="❌ Требует исправлений", callback_data=f"gip_reject:{order_id}")
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"gip_ar_approve:{order_id}"),
+            InlineKeyboardButton(text="❌ Требует исправлений", callback_data=f"gip_ar_reject:{order_id}")
         ]
     ])
 
@@ -43,7 +44,7 @@ async def show_ar_orders(message: Message):
     for order in orders:
         order_id = order["id"]
         status = order["status"]
-        doc_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
+        doc_path = os.path.abspath(os.path.join(TEMP_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
 
         buttons = []
 
@@ -80,21 +81,51 @@ async def handle_submit_ar(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📎 Отправьте PDF файл АР для проверки ГИПом:")
 
 @router.message(SubmitArFSM.waiting_for_file, F.document)
-async def receive_ar_document(message: Message, state: FSMContext):
+async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
+
+
     data = await state.get_data()
     order_id = data.get("order_id")
-
     document: Document = message.document
-    if not document.file_name.lower().endswith(".pdf"):
-        await message.answer("❗ Пожалуйста, отправьте файл в формате PDF.")
+
+    if not document.file_name.lower().endswith(".zip"):
+        await message.answer("❗️ Пожалуйста, отправьте файл в формате ZIP (.zip).")
         return
 
+    # 📁 Путь к временной папке
+    os.makedirs(TEMP_DOC_PATH, exist_ok=True)
+
+    # 🧹 Удалим предыдущие файлы submitted_{order_id}_*
+    prefix = f"submitted_{order_id}_"
+    for filename in os.listdir(TEMP_DOC_PATH):
+        if filename.startswith(prefix):
+            path_to_delete = os.path.join(TEMP_DOC_PATH, filename)
+            try:
+                os.remove(path_to_delete)
+            except Exception as e:
+                print(f"[WARN] Не удалось удалить старый файл: {path_to_delete} — {e}")
+
+    # 💾 Генерация имени нового файла
+    filename = f"submitted_{order_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
+    save_path = os.path.join(TEMP_DOC_PATH, filename)
+
+    # 📥 Скачиваем файл
+    file = await bot.get_file(document.file_id)
+    await bot.download_file(file.file_path, destination=save_path)
+
+    # 📌 Сохраняем относительный путь (относительно documents/)
+    relative_path = os.path.relpath(save_path, os.path.join(TEMP_DOC_PATH, ".."))
+
+    # ✅ Записываем путь в tasks.document_url
+    await save_ar_file_path_to_tasks(order_id, relative_path)
+
+    # 📤 Отправляем ГИПу
     order = await get_order_by_id(order_id)
     gip_telegram_id = order["gip_id"]
 
-    await message.bot.send_document(
+    await bot.send_document(
         chat_id=gip_telegram_id,
-        document=document.file_id,
+        document=FSInputFile(save_path),
         caption=f"📩 Получен файл АР от специалиста по заказу: <b>{order['title']}</b>",
         parse_mode="HTML",
         reply_markup=get_gip_review_keyboard(order['id'])

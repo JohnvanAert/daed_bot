@@ -48,6 +48,12 @@ async def send_orders_to(recipient, send_method):
                 keyboard_buttons = [[
                     InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order['id']}")
                 ]]
+        elif order["status"] == "approved_ar":
+            keyboard_buttons = [[
+                InlineKeyboardButton(text="📤 Передать расчётчику", callback_data=f"assign_calculator:{order['id']}"),
+                InlineKeyboardButton(text="📤 Передать генпланисту", callback_data=f"assign_genplan:{order['id']}")
+            ]]
+            
         else:
                 keyboard_buttons = []
 

@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task
+from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import FSInputFile
 import os
@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-
+from states.ar_correction import ReviewArCorrectionFSM
+import shutil
 load_dotenv()
 router = Router()
 # Initialize the client bot with the token from environment variables
@@ -274,3 +275,74 @@ async def handle_assign_ar(callback: CallbackQuery):
 
     await callback.message.answer("✅ Задание передано специалисту по АР.")
     await callback.answer("Передано специалисту по АР ✅", show_alert=True)
+
+@router.callback_query(F.data.startswith("gip_ar_approve:"))
+async def handle_gip_ar_approval(callback: CallbackQuery):
+    import shutil
+
+    order_id = int(callback.data.split(":")[1])
+    await update_order_status(order_id, "approved_ar")
+
+    order = await get_order_by_id(order_id)
+    order_title = order["title"]
+
+    # Получаем путь к файлу АР из tasks.document_urlы
+
+    relative_path = await get_ar_task_document(order_id)  # Пример: "temporary/submitted_1_test.zip"
+    if not relative_path:
+        await callback.message.answer("❗️ Не удалось найти путь к АР-файлу в tasks.")
+        return
+
+    # Пути
+    BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+    ABS_SOURCE_PATH = os.path.join(BASE_DOC_PATH, relative_path)  # Абсолютный путь к текущему файлу
+    TARGET_DIR = os.path.join(BASE_DOC_PATH, order_title)
+    FINAL_PATH = os.path.join(TARGET_DIR, "ar_files.zip")  # Новое имя
+
+    os.makedirs(TARGET_DIR, exist_ok=True)
+
+    try:
+        shutil.move(ABS_SOURCE_PATH, FINAL_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении: {e}")
+        return
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✅ Раздел АР принят и файл сохранён в папке проекта под именем ar_files.zip.")
+    await callback.answer("Файл принят ✅", show_alert=True)
+
+@router.callback_query(F.data.startswith("gip_ar_reject:"))
+async def handle_gip_ar_rejection(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.clear()  # 🧹 Очистим все предыдущее
+    await state.set_state(ReviewArCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="ар")
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("❗️ Напишите замечания по разделу АР:")
+    await callback.answer()
+
+@router.message(ReviewArCorrectionFSM.waiting_for_comment)
+async def send_ar_correction_comment(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    # Получаем специалиста по разделу
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+    
+    if not specialist:
+        await message.answer("❗ Специалист по этому заказу не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(f"🛠 Получены замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+              f"🗒 {comment}"),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Комментарий передан специалисту.")
+    await state.clear()

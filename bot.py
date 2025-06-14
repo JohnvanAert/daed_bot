@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import os
 from handlers import gip_review
 from handlers import ar_panel
-
+from background import daily_check
 load_dotenv()
 
 API_TOKEN = os.getenv("API_TOKEN") # возьми из .env или напрямую
@@ -33,6 +33,7 @@ dp.include_router(ar_panel.router)
 dp.include_router(ar_executor.router)
 async def main():
     await connect_db()
+    daily_check(bot)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

@@ -423,3 +423,80 @@ async def get_executor_by_task_executor_id(task_executor_id: int):
             WHERE id = $1
         """, task_executor_id)
         return dict(row) if row else None
+
+
+# database.py
+
+async def get_upcoming_deadlines():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                te.id AS task_executor_id,
+                te.deadline,
+                te.status,
+                te.executor_id,
+                t.specialist_id,
+                o.title
+            FROM task_executors te
+            JOIN tasks t ON te.task_id = t.id
+            JOIN orders o ON t.order_id = o.id
+            WHERE te.deadline IS NOT NULL
+              AND te.status != 'Готово'
+        """)
+        return [dict(row) for row in rows]
+
+
+async def get_specialist_by_order_and_section(order_id: int, section: str):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT t.specialist_id, u.full_name, u.telegram_id
+            FROM tasks t
+            JOIN users u ON u.telegram_id = t.specialist_id
+            WHERE t.order_id = $1 AND LOWER(t.section) = LOWER($2)
+            LIMIT 1
+        """, order_id, section)
+        return dict(row) if row else None
+
+async def get_latest_submitted_file_for_order(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT submission_file  -- ИЛИ другой правильный столбец
+            FROM task_executors
+            WHERE order_id = $1 AND submission_file IS NOT NULL
+            ORDER BY assigned_at DESC
+            LIMIT 1
+        """, order_id)
+        return row["submission_file"] if row else None
+
+
+async def mark_ar_file_submission(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE orders SET document_url = $1 WHERE id = $2
+        """, relative_path, order_id)
+
+
+async def set_task_document_url(order_id: int, section: str, file_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND LOWER(section) = LOWER($3)
+        """, file_path, order_id, section)
+
+
+async def get_ar_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND LOWER(section) = 'ар'
+        """, order_id)
+        return row["document_url"] if row else None
+
+async def save_ar_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND LOWER(section) = 'ар'
+        """, relative_path, order_id)
