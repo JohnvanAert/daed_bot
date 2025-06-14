@@ -342,10 +342,9 @@ async def count_executors_for_order(order_id: int) -> int:
     async with pool.acquire() as conn:
         result = await conn.fetchval("""
             SELECT COUNT(*) FROM task_executors te
-            JOIN tasks t ON te.task_id = t.id
-            WHERE t.order_id = $1 AND t.section = 'ар'
+            WHERE te.order_id = $1
         """, order_id)
-        return result or 0
+        return result
 
 
 async def get_task_executor_id(order_id: int, executor_id: int) -> int:
@@ -374,7 +373,7 @@ async def get_tasks_for_executor(executor_telegram_id: int):
         """, executor_telegram_id)
         return [dict(row) for row in rows]
 
-async def get_executor_by_task_executor_id(task_executor_id: int):
+async def get_ar_executor_by_task_executor_id(task_executor_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT te.executor_id, u.full_name, te.order_id, o.title

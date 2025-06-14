@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_executor_by_task_executor_id, save_ar_file_path_to_tasks
+from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_ar_executor_by_task_executor_id, save_ar_file_path_to_tasks
 import os
 from datetime import datetime, date, timedelta
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -21,6 +21,7 @@ class TaskAssignmentFSM(StatesGroup):
 
 router = Router()
 TEMP_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
 
 class SubmitArFSM(StatesGroup):
     waiting_for_file = State()
@@ -44,7 +45,7 @@ async def show_ar_orders(message: Message):
     for order in orders:
         order_id = order["id"]
         status = order["status"]
-        doc_path = os.path.abspath(os.path.join(TEMP_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
+        doc_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
 
         buttons = []
 
@@ -219,7 +220,7 @@ async def handle_select_ar_executor(callback: CallbackQuery, state: FSMContext):
     task_executor_id = int(callback.data.split(":")[1])
 
     # Получаем executor_id и order_id (сделаем запрос расширенным)
-    executor_row = await get_executor_by_task_executor_id(task_executor_id)
+    executor_row = await get_ar_executor_by_task_executor_id(task_executor_id)
     if not executor_row:
         await callback.message.answer("❗ Не удалось найти исполнителя.")
         return
