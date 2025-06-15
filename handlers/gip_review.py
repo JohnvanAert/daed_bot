@@ -279,36 +279,45 @@ async def handle_assign_ar(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("gip_ar_approve:"))
 async def handle_gip_ar_approval(callback: CallbackQuery):
     import shutil
+    import os
 
     order_id = int(callback.data.split(":")[1])
     await update_order_status(order_id, "approved_ar")
 
     order = await get_order_by_id(order_id)
-    order_title = order["title"]
-
-    # Получаем путь к файлу АР из tasks.document_urlы
-
-    relative_path = await get_ar_task_document(order_id)  # Пример: "temporary/submitted_1_test.zip"
-    if not relative_path:
-        await callback.message.answer("❗️ Не удалось найти путь к АР-файлу в tasks.")
+    if not order["document_url"]:
+        await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    # Пути
-    BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
-    ABS_SOURCE_PATH = os.path.join(BASE_DOC_PATH, relative_path)  # Абсолютный путь к текущему файлу
-    TARGET_DIR = os.path.join(BASE_DOC_PATH, order_title)
-    FINAL_PATH = os.path.join(TARGET_DIR, "ar_files.zip")  # Новое имя
+    # Путь до clientbot
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
 
-    os.makedirs(TARGET_DIR, exist_ok=True)
+    # Путь к папке проекта
+    relative_path = order["document_url"]  # documents/ЖК_Адал/test (1).zip
+    project_folder_rel = os.path.dirname(relative_path)  # documents/ЖК_Адал
+    PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
+
+    if not os.path.exists(PROJECT_ABS_PATH):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_ABS_PATH}")
+        return
+
+    # Путь к файлу от АР-специалиста (из tasks)
+    relative_file_path = await get_ar_task_document(order_id)
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден АР-файл в tasks.document_url.")
+        return
+
+    SOURCE_ABS_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    FINAL_PATH = os.path.join(PROJECT_ABS_PATH, "ar_files.zip")
 
     try:
-        shutil.move(ABS_SOURCE_PATH, FINAL_PATH)
+        shutil.move(SOURCE_ABS_PATH, FINAL_PATH)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении: {e}")
         return
 
     await callback.message.edit_reply_markup()
-    await callback.message.answer("✅ Раздел АР принят и файл сохранён в папке проекта под именем ar_files.zip.")
+    await callback.message.answer("✅ Раздел АР принят. Файл сохранён в папке проекта как ar_files.zip.")
     await callback.answer("Файл принят ✅", show_alert=True)
 
 @router.callback_query(F.data.startswith("gip_ar_reject:"))

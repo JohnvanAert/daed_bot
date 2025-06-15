@@ -79,11 +79,10 @@ async def handle_submit_ar(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SubmitArFSM.waiting_for_file)
     await state.update_data(order_id=order_id)
     await callback.answer()
-    await callback.message.answer("📎 Отправьте PDF файл АР для проверки ГИПом:")
+    await callback.message.answer("📎 Отправьте файл АР для проверки ГИПом:")
 
 @router.message(SubmitArFSM.waiting_for_file, F.document)
 async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
-
 
     data = await state.get_data()
     order_id = data.get("order_id")
@@ -93,10 +92,13 @@ async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❗️ Пожалуйста, отправьте файл в формате ZIP (.zip).")
         return
 
-    # 📁 Путь к временной папке
+    # 📁 Путь к временной папке внутри clientbot/documents/temporary
+    TEMP_DOC_PATH = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary")
+    )
     os.makedirs(TEMP_DOC_PATH, exist_ok=True)
 
-    # 🧹 Удалим предыдущие файлы submitted_{order_id}_*
+    # 🧹 Удаляем старые файлы submitted_{order_id}_*
     prefix = f"submitted_{order_id}_"
     for filename in os.listdir(TEMP_DOC_PATH):
         if filename.startswith(prefix):
@@ -110,17 +112,17 @@ async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
     filename = f"submitted_{order_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
     save_path = os.path.join(TEMP_DOC_PATH, filename)
 
-    # 📥 Скачиваем файл
+    # 📥 Скачивание файла от пользователя
     file = await bot.get_file(document.file_id)
     await bot.download_file(file.file_path, destination=save_path)
 
-    # 📌 Сохраняем относительный путь (относительно documents/)
+    # 📌 Относительный путь от clientbot/documents/
     relative_path = os.path.relpath(save_path, os.path.join(TEMP_DOC_PATH, ".."))
 
-    # ✅ Записываем путь в tasks.document_url
+    # 💾 Сохраняем путь в tasks.document_url
     await save_ar_file_path_to_tasks(order_id, relative_path)
 
-    # 📤 Отправляем ГИПу
+    # 📤 Отправка ГИПу
     order = await get_order_by_id(order_id)
     gip_telegram_id = order["gip_id"]
 

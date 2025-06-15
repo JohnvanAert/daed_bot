@@ -424,8 +424,6 @@ async def get_executor_by_task_executor_id(task_executor_id: int):
         return dict(row) if row else None
 
 
-# database.py
-
 async def get_upcoming_deadlines():
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -499,3 +497,30 @@ async def save_ar_file_path_to_tasks(order_id: int, relative_path: str):
             SET document_url = $1
             WHERE order_id = $2 AND LOWER(section) = 'ар'
         """, relative_path, order_id)
+
+async def save_calc_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'расчет'
+        """, relative_path, order_id)
+
+async def save_genplan_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'генплан'
+        """, relative_path, order_id)
+
+async def get_orders_by_specialist_id_tg(specialist_telegram_id: int, section: str):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT o.*
+            FROM tasks t
+            JOIN orders o ON o.id = t.order_id
+            WHERE t.specialist_id = $1 AND t.section = $2
+        """, specialist_telegram_id, section)
+        print(f"[DEBUG] Найдено заказов: {len(rows)}")
+        return [dict(row) for row in rows]

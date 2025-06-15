@@ -10,53 +10,56 @@ def send_main_menu(message, role: str, section: str = None):
             [KeyboardButton(text=" Нанять исполнителя")]
         ],
         "рс": [
-            [KeyboardButton(text="📄 Мои РС-задачи")],
-            [KeyboardButton(text="📤 Передать КЖ")]
+            [KeyboardButton(text="📄 Мои расч.задачи")]
+        ],
+        "генплан": [
+            [KeyboardButton(text="📄 Мои задачи по гп")]
         ],
         "кж": [
-            [KeyboardButton(text="📄 Мои КЖ-задачи")],
-            [KeyboardButton(text="📤 Передать ОВиК")]
+            [KeyboardButton(text="📄 Мои задачи по кж")],
+            [KeyboardButton(text=" Нанять исполнителя по кж")]
         ],
         "овик": [
-            [KeyboardButton(text="📄 Мои ОВиК-задачи")],
-            [KeyboardButton(text="📤 Передать ВК")]
+            [KeyboardButton(text="📄 Мои задачи по тс/ов")],
+            [KeyboardButton(text=" Нанять исполнителя по тс/ов")]
         ],
         "вк": [
-            [KeyboardButton(text="📄 Мои ВК-задачи")],
-            [KeyboardButton(text="📤 Передать ЭОМ")]
+            [KeyboardButton(text="📄 Мои задачи по вк")],
+            [KeyboardButton(text=" Нанять исполнителя по вк")]
         ],
         "эом": [
-            [KeyboardButton(text="📄 Мои ЭОМ-задачи")],
-            [KeyboardButton(text="📤 Передать СС")]
+            [KeyboardButton(text="📄 Мои задачи по сс")]
         ],
         "сс": [
-            [KeyboardButton(text="📄 Мои СС-задачи")],
-            [KeyboardButton(text="📤 Передать сметчику")]
+            [KeyboardButton(text="📄 Мои СС-задачи")]
         ]
     }
 
+    # 🧠 Сначала проверяем конкретные роли
     if role == "гип":
         kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
             [KeyboardButton(text="📋 Управление пользователями")],
             [KeyboardButton(text="📦 Заказы")],
             [KeyboardButton(text="📊 Аналитика")]
         ])
-    elif section in section_menus:
-        # ✅ Если есть секция — показываем только её меню
-        kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=section_menus[section])
     elif role == "специалист":
-        # 🔄 Фоллбэк на общее меню специалиста, если секция не указана
-        kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-            [KeyboardButton(text="Создать задачу")],
-            [KeyboardButton(text="📁 Мои задачи")],
-            [KeyboardButton(text="👥 Назначить исполнителя")]
-        ])
+        # 🔍 Если у специалиста есть секция — показываем конкретное меню
+        if section and section.lower() in section_menus:
+            kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=section_menus[section.lower()])
+        else:
+            # 🔄 Общее меню специалиста
+            kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+                [KeyboardButton(text="Создать задачу")],
+                [KeyboardButton(text="📁 Мои задачи")],
+                [KeyboardButton(text="👥 Назначить исполнителя")]
+            ])
     elif role == "исполнитель":
+        # 👷 Меню исполнителя не зависит от секции
         kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
             [KeyboardButton(text="📌 Мои задачи")],
             [KeyboardButton(text="✅ Отметить как сделано")]
         ])
     else:
-        return message.answer("Ваша роль не распознана. Обратитесь к администратору.")
+        return message.answer("⚠️ Ваша роль не распознана. Обратитесь к администратору.")
 
     return message.answer(f"Добро пожаловать в панель {role.capitalize()}!", reply_markup=kb)
