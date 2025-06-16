@@ -9,6 +9,10 @@ async def daily_check(bot: Bot):
     today = date.today()
 
     for task in tasks:
+        # 🔽 Пропускаем задачи, которые уже сделаны
+        if task["status"] == "Сделано":
+            continue
+
         days_left = (task["deadline"] - today).days
         executor_id = task["executor_id"]
         specialist_id = task["specialist_id"]

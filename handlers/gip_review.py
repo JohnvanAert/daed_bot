@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document
+from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import FSInputFile
 import os
@@ -174,7 +174,7 @@ async def handle_docs_accept(callback: CallbackQuery):
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Передать АР", callback_data=f"assign_ar:{order_id}")]
     ])
-
+    await update_task_status(order_id=order_id, section="эп", new_status="Сделано")
     await callback.message.edit_caption(caption=updated_caption, reply_markup=new_keyboard)
     await callback.answer("Документы приняты ✅", show_alert=True)
 
@@ -283,7 +283,7 @@ async def handle_gip_ar_approval(callback: CallbackQuery):
 
     order_id = int(callback.data.split(":")[1])
     await update_order_status(order_id, "approved_ar")
-
+    
     order = await get_order_by_id(order_id)
     if not order["document_url"]:
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
@@ -315,7 +315,7 @@ async def handle_gip_ar_approval(callback: CallbackQuery):
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении: {e}")
         return
-
+    await update_task_status(order_id=order_id, section="ар", new_status="Сделано")
     await callback.message.edit_reply_markup()
     await callback.message.answer("✅ Раздел АР принят. Файл сохранён в папке проекта как ar_files.zip.")
     await callback.answer("Файл принят ✅", show_alert=True)

@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -15,6 +15,11 @@ from aiogram.fsm.context import FSMContext
 from datetime import timedelta, date
 from states.task_states import AssignCalculatorFSM
 from states.cl_correction import ReviewCalcCorrectionFSM
+from states.task_states import AssignGenplanFSM
+from datetime import datetime, timedelta
+from states.task_states import ReviewGenplanCorrectionFSM
+from states.task_states import AssignARFSM
+import zipfile
 load_dotenv()
 router = Router()
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
@@ -187,18 +192,37 @@ async def send_project_files(order_title: str, recipient_telegram_id: int, bot, 
         await bot.send_message(recipient_telegram_id, f"❗️ Папка проекта {order_title} не найдена.")
         return
 
-    files = os.listdir(folder_path)
-    if not files:
+    if not os.listdir(folder_path):
         await bot.send_message(recipient_telegram_id, f"📁 Папка проекта {order_title} пуста.")
         return
 
-    await bot.send_message(recipient_telegram_id, f"📦 Переданы файлы проекта <b>{order_title}</b> для роли: {role}", parse_mode="HTML")
+    # 📁 Временный ZIP архив
+    zip_filename = f"{order_title}.zip"
+    zip_path = os.path.join(BASE_DOC_PATH, "temporary", zip_filename)
 
-    for filename in files:
-        file_path = os.path.join(folder_path, filename)
-        if os.path.isfile(file_path):
-            await bot.send_document(recipient_telegram_id, FSInputFile(file_path))
+    os.makedirs(os.path.dirname(zip_path), exist_ok=True)
 
+    # 🗜 Архивация папки
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                abs_path = os.path.join(root, file)
+                rel_path = os.path.relpath(abs_path, folder_path)
+                zipf.write(abs_path, arcname=rel_path)
+
+    # 📤 Отправка архива
+    await bot.send_message(
+        recipient_telegram_id,
+        f"📦 Передан архив проекта <b>{order_title}</b> для роли: {role}",
+        parse_mode="HTML"
+    )
+    await bot.send_document(recipient_telegram_id, FSInputFile(zip_path))
+
+    # ✅ При желании: удалить ZIP после отправки
+    try:
+        os.remove(zip_path)
+    except Exception as e:
+        print(f"[WARN] Не удалось удалить временный ZIP: {e}")
 
 # ✅ Передать расчетчику
 @router.callback_query(F.data.startswith("assign_calculator:"))
@@ -252,31 +276,17 @@ async def receive_deadline(message: Message, state: FSMContext):
     await message.answer("✅ Задание успешно создано и передано расчетчику.")
     await state.clear()
 
-# ✅ Передать генпланисту
-@router.callback_query(F.data.startswith("assign_genplan:"))
-async def assign_to_genplanner(callback: CallbackQuery):
-    order_id = int(callback.data.split(":")[1])
-    from database import get_order_by_id, get_specialist_by_section
-
-    order = await get_order_by_id(order_id)
-    order_title = order["title"]
-
-    genplan = await get_specialist_by_section("генплан")
-    if not genplan:
-        await callback.message.answer("❗️ Генпланист не найден.")
-        await callback.answer()
-        return
-
-    await send_project_files(order_title, genplan["telegram_id"], callback.bot, "генпланист")
-    await callback.answer("📤 Передано генпланисту", show_alert=True)
-
 @router.callback_query(F.data.startswith("approve_calc:"))
 async def handle_calc_approval(callback: CallbackQuery):
-    from database import get_specialist_by_order_and_section
+    from database import get_specialist_by_order_and_section, update_task_status
+
     order_id = int(callback.data.split(":")[1])
 
     # Обновляем статус заказа
     await update_order_status(order_id, "waiting_cl")
+
+    # Обновляем статус задачи расчётчика
+    await update_task_status(order_id=order_id, section="рс", new_status="Сделано")
 
     # Получаем специалиста по расчёту
     specialist = await get_specialist_by_order_and_section(order_id, "рс")
@@ -327,4 +337,129 @@ async def handle_calc_correction_comment(message: Message, state: FSMContext):
     )
 
     await message.answer("✅ Замечания отправлены расчётчику.")
+    await state.clear()
+
+@router.callback_query(F.data.startswith("assign_genplan:"))
+async def assign_to_genplanner(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+
+    if not order:
+        await callback.message.answer("❗ Заказ не найден.")
+        await callback.answer()
+        return
+
+    await state.update_data(order_id=order_id)
+    await state.set_state(AssignGenplanFSM.waiting_for_description)
+
+    await callback.message.answer("📝 Введите описание задачи по разделу Генплан:")
+    await callback.answer()
+
+@router.message(AssignGenplanFSM.waiting_for_description)
+async def get_genplan_description(message: Message, state: FSMContext):
+    await state.update_data(description=message.text.strip())
+    await state.set_state(AssignGenplanFSM.waiting_for_deadline)
+    await message.answer("📅 Укажите срок выполнения (Введите количество дней, например: 7):")
+
+
+@router.message(AssignGenplanFSM.waiting_for_deadline)
+async def get_genplan_deadline(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+    description = data["description"]
+    days_str = message.text.strip()
+
+    if not days_str.isdigit():
+        await message.answer("❗ Введите количество дней, например: 7")
+        return
+
+    days = int(days_str)
+    deadline = datetime.now() + timedelta(days=days)
+
+    order = await get_order_by_id(order_id)
+    order_title = order["title"]
+    genplan = await get_specialist_by_section("гп")
+
+    if not genplan:
+        await message.answer("❗ Генпланист не найден.")
+        await state.clear()
+        return
+
+    await create_task(
+        order_id=order_id,
+        section="гп",
+        specialist_id=genplan["telegram_id"],
+        description=description,
+        deadline=deadline,
+        status="assigned"
+    )
+
+    await send_project_files(order_title, genplan["telegram_id"], message.bot, "гп")
+
+    await message.answer(f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan['name']} со сроком {days} дн.")
+    await state.clear()
+
+# ✅ Принять генплан
+@router.callback_query(F.data.startswith("approve_genplan:"))
+async def handle_genplan_approval(callback: CallbackQuery):
+    from database import get_specialist_by_order_and_section, update_task_status
+
+    order_id = int(callback.data.split(":")[1])
+
+    # Обновляем статус заказа (если нужно)
+    await update_order_status(order_id, "waiting_cl")
+
+    # Обновляем статус задачи по генплану в таблице tasks
+    await update_task_status(order_id=order_id, section="гп", new_status="Сделано")
+
+    # Уведомляем генпланиста
+    specialist = await get_specialist_by_order_and_section(order_id, "гп")
+    if specialist:
+        await callback.bot.send_message(
+            chat_id=specialist["telegram_id"],
+            text=f"✅ Ваш файл по разделу Генплан по заказу #{order_id} принят ГИПом."
+        )
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✅ Генплан принят.")
+    await callback.answer("Принято ✅", show_alert=True)
+
+
+# ❌ Замечания по генплану
+@router.callback_query(F.data.startswith("revise_genplan:"))
+async def handle_genplan_revision(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ReviewGenplanCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="гп")
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✏️ Напишите замечания по Генплану:")
+    await callback.answer()
+
+
+# 📩 Получение замечания и отправка специалисту
+@router.message(ReviewGenplanCorrectionFSM.waiting_for_comment)
+async def handle_genplan_correction_comment(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+
+    if not specialist:
+        await message.answer("❗️ Специалист по Генплану не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(
+            f"❗️ Замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+            f"📝 {comment}"
+        ),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Замечания отправлены генпланисту.")
     await state.clear()

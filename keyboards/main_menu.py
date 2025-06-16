@@ -12,7 +12,7 @@ def send_main_menu(message, role: str, section: str = None):
         "рс": [
             [KeyboardButton(text="📄 Мои расч.задачи")]
         ],
-        "генплан": [
+        "гп": [
             [KeyboardButton(text="📄 Мои задачи по гп")]
         ],
         "кж": [

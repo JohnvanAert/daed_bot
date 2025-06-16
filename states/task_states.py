@@ -9,3 +9,13 @@ class TaskCreateState(StatesGroup):
 class AssignCalculatorFSM(StatesGroup):
     waiting_for_description = State()
     waiting_for_deadline = State()
+
+class AssignGenplanFSM(StatesGroup):
+    waiting_for_description = State()
+    waiting_for_deadline = State()
+
+class ReviewGenplanCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()
+
+class AssignARFSM(StatesGroup):
+    waiting_for_deadline = State()

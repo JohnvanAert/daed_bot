@@ -522,5 +522,18 @@ async def get_orders_by_specialist_id_tg(specialist_telegram_id: int, section: s
             JOIN orders o ON o.id = t.order_id
             WHERE t.specialist_id = $1 AND t.section = $2
         """, specialist_telegram_id, section)
-        print(f"[DEBUG] Найдено заказов: {len(rows)}")
         return [dict(row) for row in rows]
+    
+
+async def get_tasks_by_order(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT section FROM tasks WHERE order_id = $1", order_id)
+        return [dict(row) for row in rows]
+
+async def update_task_status(order_id: int, section: str, new_status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET status = $1
+            WHERE order_id = $2 AND section = $3
+        """, new_status, order_id, section)
