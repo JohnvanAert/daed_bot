@@ -14,6 +14,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from states.ar_correction import ReviewArCorrectionFSM
 import shutil
+from states.task_states import AssignARFSM
 load_dotenv()
 router = Router()
 # Initialize the client bot with the token from environment variables
@@ -231,50 +232,96 @@ async def handle_docs_error_comment(message: Message, state: FSMContext):
     await message.answer("✉️ Комментарий отправлен заказчику.")
     await state.clear()
 
-
 @router.callback_query(F.data.startswith("assign_ar:"))
-async def handle_assign_ar(callback: CallbackQuery):
+async def handle_assign_ar(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
     order = await get_order_by_id(order_id)
     specialist = await get_specialist_by_section("ар")
 
     if not specialist:
-        await callback.message.answer("❗ Специалист по АР не найден.")
+        await callback.message.answer("❗️ Специалист по АР не найден.")
         return
 
-    deadline = date.today() + timedelta(days=5)
+    # Сохраняем данные в FSM
+    await state.set_state(AssignARFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=specialist["telegram_id"],
+        description=order["description"],
+        title=order["title"],
+        document_url=order["document_url"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+    
+@router.message(AssignARFSM.waiting_for_deadline)
+async def receive_ar_deadline_days(message: Message, state: FSMContext):
+    from datetime import datetime, timedelta
+
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗️ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignARFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи по АР:")
+
+
+@router.message(AssignARFSM.waiting_for_description)
+async def receive_ar_description(message: Message, state: FSMContext):
+    from aiogram.types import FSInputFile
+    import os
+
+    description = message.text.strip()
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    document_url = data["document_url"]
+    deadline = data["deadline"]
+    days = data["days"]
+
     await update_order_status(order_id, "assigned_ar")
     await create_task(
         order_id=order_id,
         section="ар",
-        description=order["description"],
+        description=description,
         deadline=deadline,
-        specialist_id=specialist["telegram_id"],
+        specialist_id=specialist_id,
         status="Разработка АР"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", order["document_url"]))
+    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
     if not os.path.exists(doc_path):
-        await callback.message.answer("❗ Не удалось найти файл заказа.")
+        await message.answer("❗️ Не удалось найти файл заказа.")
+        await state.clear()
         return
 
     caption = (
         f"📄 Новый заказ на разработку АР:\n"
-        f"📌 <b>{order['title']}</b>\n"
-        f"📝 {order['description']}\n"
-        f"📅 Дедлайн: {deadline.strftime('%d.%m.%Y')}\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})\n"
         f"💬 Комментарий: Передан заказ на разработку АР"
     )
 
-    await callback.bot.send_document(
-        chat_id=specialist["telegram_id"],
+    await message.bot.send_document(
+        chat_id=specialist_id,
         document=FSInputFile(doc_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await callback.message.answer("✅ Задание передано специалисту по АР.")
-    await callback.answer("Передано специалисту по АР ✅", show_alert=True)
+    await message.answer("✅ Задание передано специалисту по АР.")
+    await state.clear()
+
 
 @router.callback_query(F.data.startswith("gip_ar_approve:"))
 async def handle_gip_ar_approval(callback: CallbackQuery):

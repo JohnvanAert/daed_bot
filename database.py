@@ -503,7 +503,7 @@ async def save_calc_file_path_to_tasks(order_id: int, relative_path: str):
         await conn.execute("""
             UPDATE tasks
             SET document_url = $1
-            WHERE order_id = $2 AND section = 'расчет'
+            WHERE order_id = $2 AND section = 'рс'
         """, relative_path, order_id)
 
 async def save_genplan_file_path_to_tasks(order_id: int, relative_path: str):
@@ -511,7 +511,7 @@ async def save_genplan_file_path_to_tasks(order_id: int, relative_path: str):
         await conn.execute("""
             UPDATE tasks
             SET document_url = $1
-            WHERE order_id = $2 AND section = 'генплан'
+            WHERE order_id = $2 AND section = 'гп'
         """, relative_path, order_id)
 
 async def get_orders_by_specialist_id_tg(specialist_telegram_id: int, section: str):
@@ -537,3 +537,32 @@ async def update_task_status(order_id: int, section: str, new_status: str):
             SET status = $1
             WHERE order_id = $2 AND section = $3
         """, new_status, order_id, section)
+
+async def get_genplan_task_document(order_id: int) -> str | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url
+            FROM tasks
+            WHERE order_id = $1 AND section = 'гп' AND document_url IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 1
+        """, order_id)
+        if row:
+            return row["document_url"]
+        return None
+
+async def get_calc_task_document(order_id: int) -> str | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'рс'
+        """, order_id)
+        return row["document_url"] if row else None
+
+async def update_task_document_path(order_id: int, section: str, new_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = $3
+        """, new_path, order_id, section)

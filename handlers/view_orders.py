@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from states.task_states import ReviewGenplanCorrectionFSM
 from states.task_states import AssignARFSM
 import zipfile
+import shutil
 load_dotenv()
 router = Router()
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
@@ -275,20 +276,16 @@ async def receive_deadline(message: Message, state: FSMContext):
 
     await message.answer("✅ Задание успешно создано и передано расчетчику.")
     await state.clear()
-
 @router.callback_query(F.data.startswith("approve_calc:"))
 async def handle_calc_approval(callback: CallbackQuery):
-    from database import get_specialist_by_order_and_section, update_task_status
 
     order_id = int(callback.data.split(":")[1])
 
-    # Обновляем статус заказа
+    # 🗂 Обновляем статус заказа и задачи
     await update_order_status(order_id, "waiting_cl")
-
-    # Обновляем статус задачи расчётчика
     await update_task_status(order_id=order_id, section="рс", new_status="Сделано")
 
-    # Получаем специалиста по расчёту
+    # ✅ Уведомляем специалиста
     specialist = await get_specialist_by_order_and_section(order_id, "рс")
     if specialist:
         await callback.bot.send_message(
@@ -296,9 +293,36 @@ async def handle_calc_approval(callback: CallbackQuery):
             text=f"✅ Ваш расчёт по заказу #{order_id} принят ГИПом."
         )
 
-    # Обновляем интерфейс у ГИПа
+    # 📥 Получаем путь к файлу
+    relative_path = await get_calc_task_document(order_id)
+    if not relative_path:
+        await callback.message.answer("❗️ Не удалось найти файл расчёта в tasks.")
+        return
+
+    # 📂 Пути
+    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+    SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
+
+    order = await get_order_by_id(order_id)
+    project_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", order["document_url"]))
+    PROJECT_DIR = os.path.dirname(project_file_path)
+
+    os.makedirs(PROJECT_DIR, exist_ok=True)
+    TARGET_PATH = os.path.join(PROJECT_DIR, "calc_files.zip")
+
+    try:
+        shutil.move(SOURCE_PATH, TARGET_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
+        return
+
+    # 💾 Обновляем путь в tasks.document_url
+    new_relative_path = os.path.relpath(TARGET_PATH, os.path.join(PROJECT_DIR, ".."))
+    await update_task_document_path(order_id, "рс", new_relative_path)
+
+    # ✅ Ответы
     await callback.message.edit_reply_markup()
-    await callback.message.answer("✅ Расчёт принят.")
+    await callback.message.answer("✅ Расчёт принят и файл сохранён в папке проекта как <b>calc_files.zip</b>.")
     await callback.answer("Принято ✅", show_alert=True)
 
 @router.callback_query(F.data.startswith("revise_calc:"))
@@ -396,20 +420,21 @@ async def get_genplan_deadline(message: Message, state: FSMContext):
 
     await send_project_files(order_title, genplan["telegram_id"], message.bot, "гп")
 
-    await message.answer(f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan['name']} со сроком {days} дн.")
+    await message.answer(
+        f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan['full_name']} со сроком {days} дн.",
+        parse_mode="HTML"
+    )
     await state.clear()
 
-# ✅ Принять генплан
 @router.callback_query(F.data.startswith("approve_genplan:"))
 async def handle_genplan_approval(callback: CallbackQuery):
-    from database import get_specialist_by_order_and_section, update_task_status
 
     order_id = int(callback.data.split(":")[1])
 
-    # Обновляем статус заказа (если нужно)
+    # Обновляем статус заказа
     await update_order_status(order_id, "waiting_cl")
 
-    # Обновляем статус задачи по генплану в таблице tasks
+    # Обновляем статус задачи по генплану
     await update_task_status(order_id=order_id, section="гп", new_status="Сделано")
 
     # Уведомляем генпланиста
@@ -420,10 +445,33 @@ async def handle_genplan_approval(callback: CallbackQuery):
             text=f"✅ Ваш файл по разделу Генплан по заказу #{order_id} принят ГИПом."
         )
 
-    await callback.message.edit_reply_markup()
-    await callback.message.answer("✅ Генплан принят.")
-    await callback.answer("Принято ✅", show_alert=True)
+    # 🔍 Получаем путь к файлу генплана из tasks.document_url
+    relative_path = await get_genplan_task_document(order_id)
+    if not relative_path:
+        await callback.message.answer("❗️ Не удалось найти файл Генплана в tasks.")
+        return
 
+    # Абсолютный путь к исходному файлу
+    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+    SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
+
+    # Папка проекта
+    order = await get_order_by_id(order_id)
+    project_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", order["document_url"]))
+    PROJECT_DIR = os.path.dirname(project_folder)  # убираем имя файла, оставляем только папку
+    
+    os.makedirs(PROJECT_DIR, exist_ok=True)
+    TARGET_PATH = os.path.join(PROJECT_DIR, "genplan_files.zip")
+
+    try:
+        shutil.move(SOURCE_PATH, TARGET_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
+        return
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✅ Генплан принят и файл сохранён в папке проекта как <b>genplan_files.zip</b>.")
+    await callback.answer("Принято ✅", show_alert=True)
 
 # ❌ Замечания по генплану
 @router.callback_query(F.data.startswith("revise_genplan:"))
