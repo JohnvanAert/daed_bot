@@ -4,7 +4,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from asyncio import run
 from database import connect_db
-from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, vgs_panel, eom_panel, ss_panel
+from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, gs_panel, kj_panel
 from dotenv import load_dotenv
 import os
 from handlers import gip_review
@@ -34,9 +34,8 @@ dp.include_router(calculator_panel.router)
 dp.include_router(genplan_panel.router)
 dp.include_router(ovik_panel.router)
 dp.include_router(vk_panel.router)
-dp.include_router(vgs_panel.router)
-dp.include_router(eom_panel.router)
-dp.include_router(ss_panel.router)
+dp.include_router(gs_panel.router)
+dp.include_router(kj_panel.router)
 
 async def main():
     await connect_db()

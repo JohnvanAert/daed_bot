@@ -63,11 +63,16 @@ async def send_orders_to(recipient, send_method):
                 InlineKeyboardButton(text="📤 Передать генпланисту", callback_data=f"assign_genplan:{order['id']}")
             ]]
         elif order["status"] == "waiting_cl":
-            keyboard_buttons = [[
-                InlineKeyboardButton(text="📤 Передать ОВиК/ТС", callback_data=f"assign_ovik:{order['id']}"),
-                InlineKeyboardButton(text="📤 Передать ВК/НВК", callback_data=f"assign_vk:{order['id']}"),
-                InlineKeyboardButton(text="📤 Передать ВГС/НГС", callback_data=f"assign_vgs:{order['id']}")
-            ]]
+            keyboard_buttons = [
+                [
+                    InlineKeyboardButton(text="📤 Передать ОВиК/ТС", callback_data=f"assign_ovik:{order['id']}"),
+                    InlineKeyboardButton(text="📤 Передать ВК/НВК", callback_data=f"assign_vk:{order['id']}")
+                ],
+                [
+                    InlineKeyboardButton(text="📤 Передать ВГС/НГС", callback_data=f"assign_vgs:{order['id']}"),
+                    InlineKeyboardButton(text="📤 Передать КЖ", callback_data=f"assign_kj:{order['id']}")
+                ]
+            ]
             
         else:
                 keyboard_buttons = []

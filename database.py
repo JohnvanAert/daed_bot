@@ -566,3 +566,36 @@ async def update_task_document_path(order_id: int, section: str, new_path: str):
             SET document_url = $1
             WHERE order_id = $2 AND section = $3
         """, new_path, order_id, section)
+
+
+async def save_kj_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'кж'
+        """, relative_path, order_id)
+
+async def save_ovik_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'овик'
+        """, relative_path, order_id)
+
+async def save_vk_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'вк'
+        """, relative_path, order_id)
+
+async def save_gs_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = 'гс'
+        """, relative_path, order_id)

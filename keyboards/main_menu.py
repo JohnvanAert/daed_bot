@@ -28,11 +28,11 @@ def send_main_menu(message, role: str, section: str = None):
             [KeyboardButton(text=" Нанять исполнителя по вк")]
         ],
         "эом": [
-            [KeyboardButton(text="📄 Мои задачи по сс")]
+            [KeyboardButton(text="📄 Мои задачи по сс")],
             [KeyboardButton(text=" Нанять исполнителя по вк")]
         ],
         "сс": [
-            [KeyboardButton(text="📄 Мои СС-задачи")]
+            [KeyboardButton(text="📄 Мои СС-задачи")],
             [KeyboardButton(text=" Нанять исполнителя по вк")]
         ]
     }
