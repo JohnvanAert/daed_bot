@@ -20,3 +20,32 @@ class ReviewGenplanCorrectionFSM(StatesGroup):
 class AssignARFSM(StatesGroup):
     waiting_for_deadline = State()
     waiting_for_description = State()
+
+class AssignKJFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+class ReviewKjCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()
+
+class AssignOVIKFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+class ReviewOvikCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()
+    waiting_for_description = State()
+
+class AssignGSFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+class ReviewGSCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()
+
+class AssignVKFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+class ReviewVkCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()

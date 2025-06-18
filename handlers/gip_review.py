@@ -2,19 +2,20 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status
+from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status, save_kj_file_path_to_tasks, get_ovik_task_document
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import FSInputFile
 import os
 from aiogram.types import Document
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from states.ar_correction import ReviewArCorrectionFSM
 import shutil
-from states.task_states import AssignARFSM
+from states.task_states import AssignARFSM, AssignKJFSM, ReviewKjCorrectionFSM, AssignOVIKFSM, ReviewOvikCorrectionFSM, AssignGSFSM, ReviewGSCorrectionFSM, AssignVKFSM, ReviewVkCorrectionFSM
+
 load_dotenv()
 router = Router()
 # Initialize the client bot with the token from environment variables
@@ -401,4 +402,605 @@ async def send_ar_correction_comment(message: Message, state: FSMContext):
     )
 
     await message.answer("✅ Комментарий передан специалисту.")
+    await state.clear()
+
+@router.callback_query(F.data.startswith("assign_kj:"))
+async def handle_assign_kj(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    specialist = await get_specialist_by_section("кж")
+
+    if not specialist:
+        await callback.message.answer("❗️ Специалист по КЖ не найден.")
+        return
+
+    await state.set_state(AssignKJFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=specialist["telegram_id"],
+        description=order["description"],
+        title=order["title"],
+        document_url=order["document_url"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+
+
+@router.message(AssignKJFSM.waiting_for_deadline)
+async def receive_kj_deadline_days(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignKJFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи по КЖ:")
+
+
+@router.message(AssignKJFSM.waiting_for_description)
+async def receive_kj_description(message: Message, state: FSMContext):
+    description = message.text.strip()
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    document_url = data["document_url"]
+    deadline = data["deadline"]
+    days = data["days"]
+
+    await update_order_status(order_id, "assigned_kj")
+    await create_task(
+        order_id=order_id,
+        section="кж",
+        description=description,
+        deadline=deadline,
+        specialist_id=specialist_id,
+        status="Разработка КЖ"
+    )
+
+    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    if not os.path.exists(doc_path):
+        await message.answer("❗️ Не удалось найти файл заказа.")
+        await state.clear()
+        return
+
+    caption = (
+        f"📄 Новый заказ по разделу КЖ:\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
+    )
+
+    await message.bot.send_document(
+        chat_id=specialist_id,
+        document=FSInputFile(doc_path),
+        caption=caption,
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Задание по КЖ передано.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("approve_kj:"))
+async def handle_gip_kj_approval(callback: CallbackQuery):
+    import shutil
+
+    order_id = int(callback.data.split(":")[1])
+    await update_order_status(order_id, "approved_kj")
+
+    # Путь до проекта
+    order = await get_order_by_id(order_id)
+    if not order["document_url"]:
+        await callback.message.answer("❗️ У заказа не указан путь document_url.")
+        return
+
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    project_folder = os.path.dirname(order["document_url"])
+    PROJECT_DIR = os.path.join(BASE_PATH, project_folder)
+
+    relative_file_path = await save_kj_file_path_to_tasks(order_id)
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден файл КЖ в tasks.")
+        return
+
+    SOURCE_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    TARGET_PATH = os.path.join(PROJECT_DIR, "kj_files.zip")
+
+    try:
+        shutil.move(SOURCE_PATH, TARGET_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗ Ошибка при перемещении файла: {e}")
+        return
+
+    await update_task_status(order_id=order_id, section="кж", new_status="Сделано")
+    await callback.message.answer("✅ Файл КЖ принят и сохранён.")
+    await callback.message.edit_reply_markup()
+    await callback.answer("Принято ✅", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("revise_kj:"))
+async def handle_kj_revision(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ReviewKjCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="кж")
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✏️ Напишите замечания по КЖ:")
+    await callback.answer()
+
+@router.message(ReviewKjCorrectionFSM.waiting_for_comment)
+async def handle_kj_correction_comment(message: Message, state: FSMContext):
+    from database import get_specialist_by_order_and_section
+
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+
+    if not specialist:
+        await message.answer("❗️ Специалист по КЖ не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(
+            f"❗️ Замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+            f"📝 {comment}"
+        ),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Замечания отправлены специалисту по КЖ.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("assign_ovik:"))
+async def handle_assign_ovik(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    specialist = await get_specialist_by_section("овик")
+
+    if not specialist:
+        await callback.message.answer("❗️ Специалист по ОВиК не найден.")
+        return
+
+    await state.set_state(AssignOVIKFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=specialist["telegram_id"],
+        description=order["description"],
+        title=order["title"],
+        document_url=order["document_url"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+
+
+@router.message(AssignOVIKFSM.waiting_for_deadline)
+async def receive_ovik_deadline_days(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignOVIKFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи по ОВиК/ТС:")
+
+
+@router.message(AssignOVIKFSM.waiting_for_description)
+async def receive_ovik_description(message: Message, state: FSMContext):
+    description = message.text.strip()
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    document_url = data["document_url"]
+    deadline = data["deadline"]
+    days = data["days"]
+
+    await update_order_status(order_id, "assigned_ovik")
+    await create_task(
+        order_id=order_id,
+        section="овик",
+        description=description,
+        deadline=deadline,
+        specialist_id=specialist_id,
+        status="Разработка ОВиК/ТС"
+    )
+
+    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    if not os.path.exists(doc_path):
+        await message.answer("❗️ Не удалось найти файл заказа.")
+        await state.clear()
+        return
+
+    caption = (
+        f"📄 Новый заказ по разделу ОВиК/ТС:\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
+    )
+
+    await message.bot.send_document(
+        chat_id=specialist_id,
+        document=FSInputFile(doc_path),
+        caption=caption,
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Задание по ОВиК передано.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("approve_ovik:"))
+async def handle_gip_ovik_approval(callback: CallbackQuery):
+
+    order_id = int(callback.data.split(":")[1])
+    await update_order_status(order_id, "approved_ovik")
+
+    order = await get_order_by_id(order_id)
+    if not order["document_url"]:
+        await callback.message.answer("❗️ У заказа не указан путь document_url.")
+        return
+
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    project_folder = os.path.dirname(order["document_url"])
+    PROJECT_DIR = os.path.join(BASE_PATH, project_folder)
+
+    relative_file_path = await get_ovik_task_document(order_id)
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден файл ОВиК в tasks.")
+        return
+
+    SOURCE_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    TARGET_PATH = os.path.join(PROJECT_DIR, "ovik_files.zip")
+
+    try:
+        shutil.move(SOURCE_PATH, TARGET_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
+        return
+
+    await update_task_status(order_id=order_id, section="овик", new_status="Сделано")
+    await callback.message.answer("✅ Файл ОВиК принят и сохранён.")
+    await callback.message.edit_reply_markup()
+    await callback.answer("Принято ✅", show_alert=True)
+
+@router.callback_query(F.data.startswith("revise_ovik:"))
+async def handle_ovik_revision(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ReviewOvikCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="овик")
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✏️ Напишите замечания по ОВиК:")
+    await callback.answer()
+
+
+@router.message(ReviewOvikCorrectionFSM.waiting_for_comment)
+async def handle_ovik_correction_comment(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+
+    if not specialist:
+        await message.answer("❗️ Специалист по ОВиК не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(
+            f"❗️ Замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+            f"📝 {comment}"
+        ),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Замечания отправлены специалисту по ОВиК.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("assign_gs:"))
+async def handle_assign_gs(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    specialist = await get_specialist_by_section("гс")  # или "гс", в зависимости от вашей базы
+
+    if not specialist:
+        await callback.message.answer("❗️ Специалист по ГС не найден.")
+        return
+
+    await state.set_state(AssignGSFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=specialist["telegram_id"],
+        description=order["description"],
+        title=order["title"],
+        document_url=order["document_url"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+
+@router.message(AssignGSFSM.waiting_for_deadline)
+async def receive_gs_deadline_days(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignGSFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи по ГС:")
+
+
+@router.message(AssignGSFSM.waiting_for_description)
+async def receive_gs_description(message: Message, state: FSMContext):
+    description = message.text.strip()
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    document_url = data["document_url"]
+    deadline = data["deadline"]
+    days = data["days"]
+
+    await update_order_status(order_id, "assigned_gs")
+    await create_task(
+        order_id=order_id,
+        section="вгс",  # или "гс"
+        description=description,
+        deadline=deadline,
+        specialist_id=specialist_id,
+        status="Разработка ГС/ВГС"
+    )
+
+    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    if not os.path.exists(doc_path):
+        await message.answer("❗️ Не удалось найти файл заказа.")
+        await state.clear()
+        return
+
+    caption = (
+        f"📄 Новый заказ по разделу ГC:\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
+    )
+
+    await message.bot.send_document(
+        chat_id=specialist_id,
+        document=FSInputFile(doc_path),
+        caption=caption,
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Задание по ГС передано.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("revise_gs:"))
+async def handle_gs_revision(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ReviewGSCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="вгс")  # Или "гс", если у тебя так в базе
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✏️ Напишите замечания по разделу ГС:")
+    await callback.answer()
+
+@router.message(ReviewGSCorrectionFSM.waiting_for_comment)
+async def handle_gs_correction_comment(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+
+    if not specialist:
+        await message.answer("❗️ Специалист по ГС не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(
+            f"❗️ Замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+            f"📝 {comment}"
+        ),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Замечания отправлены специалисту по ГС.")
+    await state.clear()
+
+@router.callback_query(F.data.startswith("approve_gs:"))
+async def handle_gip_gs_approval(callback: CallbackQuery):
+    import shutil
+    from database import update_order_status, update_task_status, get_order_by_id, get_gs_task_document
+
+    order_id = int(callback.data.split(":")[1])
+    await update_order_status(order_id, "approved_gs")
+
+    order = await get_order_by_id(order_id)
+    if not order["document_url"]:
+        await callback.message.answer("❗️ У заказа не указан путь document_url.")
+        return
+
+    # Абсолютные пути
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    project_folder = os.path.dirname(order["document_url"])
+    PROJECT_DIR = os.path.join(BASE_PATH, project_folder)
+
+    # Получаем путь к файлу от ГС-специалиста
+    relative_file_path = await get_gs_task_document(order_id)
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден файл ГС/ВГС в tasks.")
+        return
+
+    SOURCE_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    TARGET_PATH = os.path.join(PROJECT_DIR, "gs_files.zip")
+
+    try:
+        shutil.move(SOURCE_PATH, TARGET_PATH)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
+        return
+
+    await update_task_status(order_id=order_id, section="вгс", new_status="Сделано")
+
+    await callback.message.answer("✅ Файл ГС/ВГС принят и сохранён.")
+    await callback.message.edit_reply_markup()
+    await callback.answer("Принято ✅", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("assign_vk:"))
+async def handle_assign_vk(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    specialist = await get_specialist_by_section("вк")
+
+    if not specialist:
+        await callback.message.answer("❗️ Специалист по ВК не найден.")
+        return
+
+    await state.set_state(AssignVKFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=specialist["telegram_id"],
+        description=order["description"],
+        title=order["title"],
+        document_url=order["document_url"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+
+
+@router.message(AssignVKFSM.waiting_for_deadline)
+async def receive_vk_deadline_days(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗️ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignVKFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи по ВК/НВК:")
+
+
+@router.message(AssignVKFSM.waiting_for_description)
+async def receive_vk_description(message: Message, state: FSMContext):
+    description = message.text.strip()
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    document_url = data["document_url"]
+    deadline = data["deadline"]
+    days = data["days"]
+
+    await update_order_status(order_id, "assigned_vk")
+    await create_task(
+        order_id=order_id,
+        section="вк",
+        description=description,
+        deadline=deadline,
+        specialist_id=specialist_id,
+        status="Разработка ВК/НВК"
+    )
+
+    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    if not os.path.exists(doc_path):
+        await message.answer("❗️ Не удалось найти файл заказа.")
+        await state.clear()
+        return
+
+    caption = (
+        f"📄 Новый заказ по разделу ВК/НВК:\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
+    )
+
+    await message.bot.send_document(
+        chat_id=specialist_id,
+        document=FSInputFile(doc_path),
+        caption=caption,
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Задание по ВК/НВК передано.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("revise_vk:"))
+async def handle_vk_revision(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ReviewVkCorrectionFSM.waiting_for_comment)
+    await state.update_data(order_id=order_id, section="вк")
+
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✏️ Напишите замечания по ВК:")
+    await callback.answer()
+
+@router.message(ReviewVkCorrectionFSM.waiting_for_comment)
+async def handle_vk_correction_comment(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+    order_id = data["order_id"]
+    section = data["section"]
+    comment = message.text.strip()
+
+    specialist = await get_specialist_by_order_and_section(order_id, section)
+
+    if not specialist:
+        await message.answer("❗️ Специалист по ВК не найден.")
+        await state.clear()
+        return
+
+    await message.bot.send_message(
+        chat_id=specialist["telegram_id"],
+        text=(
+            f"❗️ Замечания по разделу <b>{section.upper()}</b> по заказу #{order_id}:\n\n"
+            f"📝 {comment}"
+        ),
+        parse_mode="HTML"
+    )
+
+    await message.answer("✅ Замечания отправлены специалисту по ВК.")
     await state.clear()

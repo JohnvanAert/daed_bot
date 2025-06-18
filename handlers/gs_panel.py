@@ -56,8 +56,8 @@ async def receive_vgs_file(message: Message, state: FSMContext, bot):
     gip_id = order["gip_id"]
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_vgs:{order_id}"),
-         InlineKeyboardButton(text="❌ Исправить", callback_data=f"revise_vgs:{order_id}")]
+        [InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_gs:{order_id}"),
+         InlineKeyboardButton(text="❌ Исправить", callback_data=f"revise_gs:{order_id}")]
     ])
 
     await bot.send_document(

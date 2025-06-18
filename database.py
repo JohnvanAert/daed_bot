@@ -599,3 +599,21 @@ async def save_gs_file_path_to_tasks(order_id: int, relative_path: str):
             SET document_url = $1
             WHERE order_id = $2 AND section = 'гс'
         """, relative_path, order_id)
+
+
+async def get_ovik_task_document(order_id: int) -> str | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'овик'
+        """, order_id)
+        return row["document_url"] if row else None
+
+async def get_gs_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'вгс'
+        """, order_id)
+        return row["document_url"] if row else None
+
