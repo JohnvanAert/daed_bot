@@ -617,3 +617,93 @@ async def get_gs_task_document(order_id: int):
         """, order_id)
         return row["document_url"] if row else None
 
+async def get_available_kj_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'кж'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+
+async def assign_executor_to_kj_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)
+
+
+async def get_available_ovik_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'овик'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+
+async def assign_executor_to_ovik_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)
+
+async def get_available_gs_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'гс'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+async def assign_executor_to_gs_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)
+
+async def get_available_vk_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'гс'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+async def assign_executor_to_vk_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)

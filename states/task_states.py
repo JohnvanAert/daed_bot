@@ -49,3 +49,6 @@ class AssignVKFSM(StatesGroup):
 
 class ReviewVkCorrectionFSM(StatesGroup):
     waiting_for_comment = State()
+
+class SubmitKjFSM(StatesGroup):
+    waiting_for_file = State()
