@@ -707,3 +707,84 @@ async def assign_executor_to_vk_order(order_id: int, executor_telegram_id: int, 
             VALUES ($1, $2, $3)
             ON CONFLICT DO NOTHING
         """, order_id, executor_telegram_id, specialist_telegram_id)
+
+
+async def get_eom_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'вгс'
+        """, order_id)
+        return row["document_url"] if row else None
+
+
+async def save_eom_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND LOWER(section) = 'ар'
+        """, relative_path, order_id)
+
+
+async def get_available_eom_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'гс'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+
+async def assign_executor_to_eom_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)
+
+async def assign_executor_to_ss_order(order_id: int, executor_telegram_id: int, specialist_telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO task_executors (order_id, executor_id, specialist_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        """, order_id, executor_telegram_id, specialist_telegram_id)
+
+
+async def get_available_ss_executors(order_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, telegram_id
+            FROM users
+            WHERE role = 'исполнитель' AND section = 'сс'
+              AND telegram_id NOT IN (
+                  SELECT executor_id FROM task_executors
+                  WHERE order_id = $1
+              )
+            LIMIT 3
+        """, order_id)
+        return [dict(row) for row in rows]
+
+async def save_ss_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND LOWER(section) = 'сс'
+        """, relative_path, order_id)
+
+async def get_ss_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'вгс'
+        """, order_id)
+        return row["document_url"] if row else None

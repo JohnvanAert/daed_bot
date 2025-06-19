@@ -52,3 +52,18 @@ class ReviewVkCorrectionFSM(StatesGroup):
 
 class SubmitKjFSM(StatesGroup):
     waiting_for_file = State()
+
+class AssignEOMFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+
+class ReviewEomCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()
+
+class AssignSSFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()
+
+class ReviewSSCorrectionFSM(StatesGroup):
+    waiting_for_comment = State()

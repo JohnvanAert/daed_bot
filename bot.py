@@ -13,7 +13,6 @@ from background import daily_check
 load_dotenv()
 
 API_TOKEN = os.getenv("API_TOKEN") # возьми из .env или напрямую
-
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)

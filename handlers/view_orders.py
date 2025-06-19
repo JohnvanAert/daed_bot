@@ -71,6 +71,10 @@ async def send_orders_to(recipient, send_method):
                 [
                     InlineKeyboardButton(text="📤 Передать ВГС/НГС", callback_data=f"assign_gs:{order['id']}"),
                     InlineKeyboardButton(text="📤 Передать КЖ", callback_data=f"assign_kj:{order['id']}")
+                ],
+                [
+                    InlineKeyboardButton(text="📤 Передать ЭОМ", callback_data=f"assign_eom:{order['id']}"),
+                    InlineKeyboardButton(text="📤 Передать СС", callback_data=f"assign_ss:{order['id']}")
                 ]
             ]
             
