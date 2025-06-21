@@ -69,7 +69,7 @@ async def receive_vk_file(message: Message, state: FSMContext, bot):
     gip_id = order["gip_id"]
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_vk:{order_id}"),
+        [InlineKeyboardButton(text="✅ Принять", callback_data=f"gip_vk_approve:{order_id}"),
          InlineKeyboardButton(text="❌ Исправить", callback_data=f"revise_vk:{order_id}")]
     ])
 

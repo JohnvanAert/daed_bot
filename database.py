@@ -576,6 +576,15 @@ async def save_kj_file_path_to_tasks(order_id: int, relative_path: str):
             WHERE order_id = $2 AND section = 'кж'
         """, relative_path, order_id)
 
+async def get_kj_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND LOWER(section) = 'кж'
+        """, order_id)
+        return row["document_url"] if row else None
+
+
 async def save_ovik_file_path_to_tasks(order_id: int, relative_path: str):
     async with pool.acquire() as conn:
         await conn.execute("""
@@ -613,7 +622,7 @@ async def get_gs_task_document(order_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT document_url FROM tasks
-            WHERE order_id = $1 AND section = 'вгс'
+            WHERE order_id = $1 AND section = 'гс'
         """, order_id)
         return row["document_url"] if row else None
 
@@ -691,7 +700,7 @@ async def get_available_vk_executors(order_id: int):
         rows = await conn.fetch("""
             SELECT id, full_name, telegram_id
             FROM users
-            WHERE role = 'исполнитель' AND section = 'гс'
+            WHERE role = 'исполнитель' AND section = 'вк'
               AND telegram_id NOT IN (
                   SELECT executor_id FROM task_executors
                   WHERE order_id = $1
@@ -713,7 +722,7 @@ async def get_eom_task_document(order_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT document_url FROM tasks
-            WHERE order_id = $1 AND section = 'вгс'
+            WHERE order_id = $1 AND section = 'эом'
         """, order_id)
         return row["document_url"] if row else None
 
@@ -723,7 +732,7 @@ async def save_eom_file_path_to_tasks(order_id: int, relative_path: str):
         await conn.execute("""
             UPDATE tasks
             SET document_url = $1
-            WHERE order_id = $2 AND LOWER(section) = 'ар'
+            WHERE order_id = $2 AND LOWER(section) = 'эом'
         """, relative_path, order_id)
 
 
@@ -732,7 +741,7 @@ async def get_available_eom_executors(order_id: int):
         rows = await conn.fetch("""
             SELECT id, full_name, telegram_id
             FROM users
-            WHERE role = 'исполнитель' AND section = 'гс'
+            WHERE role = 'исполнитель' AND section = 'эом'
               AND telegram_id NOT IN (
                   SELECT executor_id FROM task_executors
                   WHERE order_id = $1
@@ -785,6 +794,92 @@ async def get_ss_task_document(order_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT document_url FROM tasks
-            WHERE order_id = $1 AND section = 'вгс'
+            WHERE order_id = $1 AND section = 'сс'
         """, order_id)
         return row["document_url"] if row else None
+
+
+# Для task_executors
+async def get_upcoming_executor_deadlines():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                te.id AS task_executor_id,
+                te.deadline,
+                te.status,
+                te.executor_id,
+                o.title
+            FROM task_executors te
+            JOIN orders o ON te.order_id = o.id
+            WHERE te.deadline IS NOT NULL
+              AND te.status != 'Готово'
+        """)
+        return [dict(row) for row in rows]
+
+
+# Для tasks
+async def get_upcoming_specialist_deadlines():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                t.id,
+                t.deadline,
+                t.status,
+                t.specialist_id,
+                t.section
+            FROM tasks t
+            WHERE t.deadline IS NOT NULL
+              AND t.status != 'Сделано'
+        """)
+        return [dict(row) for row in rows]
+
+async def get_vk_task_document(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND section = 'вк'
+        """, order_id)
+        return row["document_url"] if row else None
+
+async def save_estimate_file_path_to_tasks(order_id: int, relative_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND LOWER(section) = 'смета'
+        """, relative_path, order_id)
+
+async def get_all_experts():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT telegram_id, section
+            FROM users
+            WHERE role = 'эксперт'
+        """)
+        return [dict(r) for r in rows]
+
+async def get_task_document_by_section(order_id: int, section: str):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url FROM tasks
+            WHERE order_id = $1 AND LOWER(section) = $2
+        """, order_id, section.lower())
+        return row["document_url"] if row else None
+
+
+async def get_expert_tasks(expert_telegram_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                t.id AS task_id,
+                o.title AS order_title,
+                o.description AS order_description,
+                t.section,
+                t.document_url
+            FROM tasks t
+            JOIN users u ON LOWER(t.section) = LOWER(u.section)
+            JOIN orders o ON o.id = t.order_id
+            WHERE u.telegram_id = $1
+              AND t.document_url IS NOT NULL
+        """, expert_telegram_id)
+        return [dict(r) for r in rows]

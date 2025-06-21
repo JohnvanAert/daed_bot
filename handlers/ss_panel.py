@@ -17,7 +17,7 @@ class SubmitSsFSM(StatesGroup):
     waiting_for_file = State()
 
 # 📄 Панель СС
-@router.message(F.text == "📄 Мои задачи по СС")
+@router.message(F.text == "📄 Мои задачи по сс")
 async def show_ss_tasks(message: Message):
     orders = await get_orders_by_specialist_id(message.from_user.id, section="сс")
     if not orders:
@@ -76,8 +76,8 @@ async def receive_ss_file(message: Message, state: FSMContext, bot):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_ss:{order_id}"),
-            InlineKeyboardButton(text="❌ Исправить", callback_data=f"revise_ss:{order_id}")
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"gip_ss_approve:{order_id}"),
+            InlineKeyboardButton(text="❌ Исправить", callback_data=f"gip_ss_reject:{order_id}")
         ]
     ])
 

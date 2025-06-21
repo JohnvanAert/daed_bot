@@ -31,18 +31,20 @@ class SubmitEomFSM(StatesGroup):
 @router.message(F.text == "📄 Мои задачи по эом")
 async def show_eom_tasks(message: Message):
     orders = await get_orders_by_specialist_id(message.from_user.id, section="эом")
+    
+
     if not orders:
         await message.answer("📭 У вас пока нет задач.")
         return
 
     for order in orders:
         order_id = order["id"]
-        status = order["status"]
+        status = order.get("status", "не указано")
         caption = (
-            f"📌 <b>{order['title']}</b>\n"
-            f"📝 {order['description']}\n"
-            f"📅 Дата: {order['created_at'].strftime('%Y-%m-%d %H:%M')}"
-        )  
+            f"📌 <b>{order.get('title', 'Без названия')}</b>\n"
+            f"📝 {order.get('description', 'Без описания')}\n"
+            f"📅 Дата: {order.get('created_at', '???')}"
+        )
 
         buttons = []
         if status == "assigned_eom":
@@ -89,8 +91,8 @@ async def receive_eom_file(message: Message, state: FSMContext, bot):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Принять", callback_data=f"approve_eom:{order_id}"),
-            InlineKeyboardButton(text="❌ Исправить", callback_data=f"revise_eom:{order_id}")
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"gip_eom_approve:{order_id}"),
+            InlineKeyboardButton(text="❌ Исправить", callback_data=f"gip_eom_reject:{order_id}")
         ]
     ])
 

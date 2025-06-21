@@ -38,6 +38,12 @@ def send_main_menu(message, role: str, section: str = None):
         "сс": [
             [KeyboardButton(text="📄 Мои задачи по сс")],
             [KeyboardButton(text=" Нанять исполнителя по сс")]
+        ],
+        "сметчик": [
+            [KeyboardButton(text="📄 Мои задачи по смете")]
+        ],
+        "эксперт": [
+            [KeyboardButton(text="📄 Мои экспертизы")]
         ]
     }
 

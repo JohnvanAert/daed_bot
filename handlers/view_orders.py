@@ -23,6 +23,12 @@ import zipfile
 import shutil
 load_dotenv()
 router = Router()
+ALLOWED_STATUSES = {
+    "assigned_vk", "approved_gs", "assigned_gs", "approved_ovik", "approve_ovik",
+    "assigned_ovik", "approved_kj", "approve_kj", "assigned_kj", "approved_ss",
+    "gip_ss_approve", "assigned_ss", "approved_eom", "gip_eom_approve", "assigned_eom",
+    "approved_vk", "gip_vk_approve"
+}
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
 # Initialize the client bot with the token from environment variables
 client_bot = Bot(
@@ -62,7 +68,7 @@ async def send_orders_to(recipient, send_method):
                 InlineKeyboardButton(text="📤 Передать расчётчику", callback_data=f"assign_calculator:{order['id']}"),
                 InlineKeyboardButton(text="📤 Передать генпланисту", callback_data=f"assign_genplan:{order['id']}")
             ]]
-        elif order["status"] == "waiting_cl":
+        elif order["status"] in ALLOWED_STATUSES:
             keyboard_buttons = [
                 [
                     InlineKeyboardButton(text="📤 Передать ОВиК/ТС", callback_data=f"assign_ovik:{order['id']}"),
@@ -75,6 +81,9 @@ async def send_orders_to(recipient, send_method):
                 [
                     InlineKeyboardButton(text="📤 Передать ЭОМ", callback_data=f"assign_eom:{order['id']}"),
                     InlineKeyboardButton(text="📤 Передать СС", callback_data=f"assign_ss:{order['id']}")
+                ],
+                [
+                    InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}")
                 ]
             ]
             
