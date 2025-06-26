@@ -8,7 +8,7 @@ from database import get_orders_by_specialist_id, save_genplan_file_path_to_task
 
 router = Router()
 
-GENPLAN_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+GENPLAN_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitGenplanFSM(StatesGroup):
     waiting_for_file = State()

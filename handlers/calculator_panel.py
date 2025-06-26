@@ -7,7 +7,7 @@ from database import get_orders_by_specialist_id, save_calc_file_path_to_tasks, 
 
 router = Router()
 
-CALC_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+CALC_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitCalcFSM(StatesGroup):
     waiting_for_file = State()

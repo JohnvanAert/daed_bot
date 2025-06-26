@@ -9,7 +9,7 @@ from datetime import datetime
 
 router = Router()
 
-OVIK_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+OVIK_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitOvikFSM(StatesGroup):
     waiting_for_file = State()

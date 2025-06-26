@@ -11,7 +11,7 @@ from database import (
 )
 
 router = Router()
-BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 
 # Состояния FSM
 class SubmitGSTaskFSM(StatesGroup):

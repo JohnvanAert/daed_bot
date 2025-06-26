@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 router = Router()
-VK_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+VK_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitVkFSM(StatesGroup):
     waiting_for_file = State()

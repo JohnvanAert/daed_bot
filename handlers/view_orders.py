@@ -29,7 +29,7 @@ ALLOWED_STATUSES = {
     "gip_ss_approve", "assigned_ss", "approved_eom", "gip_eom_approve", "assigned_eom",
     "approved_vk", "gip_vk_approve"
 }
-BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 # Initialize the client bot with the token from environment variables
 client_bot = Bot(
     token=os.getenv("CLIENT_BOT_TOKEN"),
@@ -318,11 +318,11 @@ async def handle_calc_approval(callback: CallbackQuery):
         return
 
     # 📂 Пути
-    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
     SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
 
     order = await get_order_by_id(order_id)
-    project_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", order["document_url"]))
+    project_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", order["document_url"]))
     PROJECT_DIR = os.path.dirname(project_file_path)
 
     os.makedirs(PROJECT_DIR, exist_ok=True)
@@ -470,12 +470,12 @@ async def handle_genplan_approval(callback: CallbackQuery):
         return
 
     # Абсолютный путь к исходному файлу
-    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
     SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
 
     # Папка проекта
     order = await get_order_by_id(order_id)
-    project_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", order["document_url"]))
+    project_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", order["document_url"]))
     PROJECT_DIR = os.path.dirname(project_folder)  # убираем имя файла, оставляем только папку
     
     os.makedirs(PROJECT_DIR, exist_ok=True)

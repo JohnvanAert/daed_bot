@@ -20,8 +20,8 @@ class TaskAssignmentFSM(StatesGroup):
 
 
 router = Router()
-TEMP_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
-BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+TEMP_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 
 class SubmitArFSM(StatesGroup):
     waiting_for_file = State()
@@ -92,9 +92,9 @@ async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❗️ Пожалуйста, отправьте файл в формате ZIP (.zip).")
         return
 
-    # 📁 Путь к временной папке внутри clientbot/documents/temporary
+    # 📁 Путь к временной папке внутри psdbot/documents/temporary
     TEMP_DOC_PATH = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary")
+        os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary")
     )
     os.makedirs(TEMP_DOC_PATH, exist_ok=True)
 
@@ -116,7 +116,7 @@ async def receive_ar_document(message: Message, state: FSMContext, bot: Bot):
     file = await bot.get_file(document.file_id)
     await bot.download_file(file.file_path, destination=save_path)
 
-    # 📌 Относительный путь от clientbot/documents/
+    # 📌 Относительный путь от psdbot/documents/
     relative_path = os.path.relpath(save_path, os.path.join(TEMP_DOC_PATH, ".."))
 
     # 💾 Сохраняем путь в tasks.document_url

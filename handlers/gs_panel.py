@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 router = Router()
-VGS_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+VGS_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitVgsFSM(StatesGroup):
     waiting_for_file = State()

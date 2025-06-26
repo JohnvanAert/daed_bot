@@ -11,7 +11,7 @@ import os
 
 router = Router()
 
-KJ_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+KJ_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitKjFSM(StatesGroup):
     waiting_for_file = State()

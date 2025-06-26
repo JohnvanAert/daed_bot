@@ -4,11 +4,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from asyncio import run
 from database import connect_db
-from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, gs_panel, kj_panel, eom_panel, ss_panel, estimator_panel
+from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, gs_panel, kj_panel, eom_panel, ss_panel, estimator_panel, gip_review, ar_panel
 from dotenv import load_dotenv
 import os
-from handlers import gip_review
-from handlers import ar_panel
 from aiogram import Router
 from aiogram.types import Message
 from background import run_deadline_check

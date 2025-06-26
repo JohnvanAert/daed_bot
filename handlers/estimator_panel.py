@@ -15,7 +15,7 @@ import os
 
 router = Router()
 
-ESTIMATE_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+ESTIMATE_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitEstimateFSM(StatesGroup):
     waiting_for_file = State()

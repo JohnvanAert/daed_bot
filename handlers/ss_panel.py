@@ -11,7 +11,7 @@ from database import (assign_executor_to_section, get_user_by_id, get_unassigned
 
 router = Router()
 
-SS_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents", "temporary"))
+SS_TEMP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
 
 class SubmitSsFSM(StatesGroup):
     waiting_for_file = State()

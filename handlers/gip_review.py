@@ -17,6 +17,7 @@ import shutil
 from states.task_states import AssignARFSM, AssignKJFSM, ReviewKjCorrectionFSM, AssignOVIKFSM, ReviewOvikCorrectionFSM, AssignGSFSM, ReviewGSCorrectionFSM, AssignVKFSM, ReviewVkCorrectionFSM, AssignEOMFSM, ReviewEomCorrectionFSM, AssignSSFSM, ReviewSSCorrectionFSM
 
 load_dotenv()
+EXPERT_API_TOKEN = os.getenv("EXPERT_BOT_TOKEN")  
 router = Router()
 # Initialize the client bot with the token from environment variables
 client_bot = Bot(
@@ -36,7 +37,7 @@ async def handle_gip_approval(callback: CallbackQuery):
     order = await get_order_by_id(order_id)
     customer_id = await get_customer_telegram_id(order["customer_id"])
     await update_order_status(order_id, "receive_ird")
-    ep_file_path = os.path.abspath(os.path.join("..", "clientbot", order["document_url"]))
+    ep_file_path = os.path.abspath(os.path.join("..", "psdbot", order["document_url"]))
     
     if os.path.exists(ep_file_path):
         caption = (
@@ -299,7 +300,7 @@ async def receive_ar_description(message: Message, state: FSMContext):
         status="Разработка АР"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -335,8 +336,8 @@ async def handle_gip_ar_approval(callback: CallbackQuery):
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    # Путь до clientbot
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    # Путь до psdbot
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
 
     # Путь к папке проекта
     relative_path = order["document_url"]  # documents/ЖК_Адал/test (1).zip
@@ -463,7 +464,7 @@ async def receive_kj_description(message: Message, state: FSMContext):
         status="Разработка КЖ"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -500,7 +501,7 @@ async def handle_gip_kj_approval(callback: CallbackQuery):
         return
 
     # Путь до папки проекта
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder_rel = os.path.dirname(order["document_url"])  # например: documents/ЖК_Адал
     PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
 
@@ -628,7 +629,7 @@ async def receive_ovik_description(message: Message, state: FSMContext):
         status="Разработка ОВиК/ТС"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -663,7 +664,7 @@ async def handle_gip_ovik_approval(callback: CallbackQuery):
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder = os.path.dirname(order["document_url"])
     PROJECT_DIR = os.path.join(BASE_PATH, project_folder)
 
@@ -785,7 +786,7 @@ async def receive_gs_description(message: Message, state: FSMContext):
         status="Разработка ГС"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -857,7 +858,7 @@ async def handle_gip_gs_approval(callback: CallbackQuery):
         return
 
     # Абсолютные пути
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder = os.path.dirname(order["document_url"])
     PROJECT_DIR = os.path.join(BASE_PATH, project_folder)
 
@@ -944,7 +945,7 @@ async def receive_vk_description(message: Message, state: FSMContext):
         status="Разработка ВК"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -979,7 +980,7 @@ async def handle_gip_vk_approval(callback: CallbackQuery):
         return
 
     # Путь до папки проекта
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder_rel = os.path.dirname(order["document_url"])  # например: documents/ЖК_Адал
     PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
 
@@ -1108,7 +1109,7 @@ async def receive_eom_description(message: Message, state: FSMContext):
         status="Разработка ЭОМ"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -1143,7 +1144,7 @@ async def handle_gip_eom_approval(callback: CallbackQuery):
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder_rel = os.path.dirname(order["document_url"])
     PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
 
@@ -1275,7 +1276,7 @@ async def receive_ss_description(message: Message, state: FSMContext):
         status="Разработка СС"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "clientbot", document_url))
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
     if not os.path.exists(doc_path):
         await message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
@@ -1313,7 +1314,7 @@ async def handle_gip_ss_approval(callback: CallbackQuery):
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
     project_folder_rel = os.path.dirname(order["document_url"])
     PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
 
@@ -1382,11 +1383,10 @@ async def send_ss_correction_comment(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("send_to_expert:"))
 async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
-    import os
-    from aiogram.types import FSInputFile
 
     order_id = int(callback.data.split(":")[1])
-    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot"))
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
+    expert_bot = Bot(token=EXPERT_API_TOKEN)
 
     # 1. Получить список всех экспертов (с ролями и разделами)
     experts = await get_all_experts()  # Например: [{'telegram_id': ..., 'section': 'ар'}, ...]
@@ -1407,13 +1407,14 @@ async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
 
         # 4. Отправляем файл эксперту
         try:
-            await bot.send_document(
+            await expert_bot.send_document(
                 chat_id=tg_id,
                 document=FSInputFile(abs_path),
                 caption=f"📩 Заказ #{order_id} — раздел {section.upper()}.\nПросьба ознакомиться и при необходимости написать замечания."
             )
+
         except Exception as e:
             print(f"Ошибка при отправке {section} эксперту {tg_id}: {e}")
-
+    await update_order_status(order_id, "sent_to_experts")
     await callback.message.answer("✅ Все разделы отправлены экспертам.")
     await callback.answer("Отправлено экспертам ✅", show_alert=True)

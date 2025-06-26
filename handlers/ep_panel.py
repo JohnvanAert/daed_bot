@@ -6,7 +6,7 @@ from database import get_orders_by_specialist_id, get_order_by_id
 import os
 
 router = Router()
-BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clientbot", "documents"))
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 
 class SubmitEpFSM(StatesGroup):
     waiting_for_file = State()
