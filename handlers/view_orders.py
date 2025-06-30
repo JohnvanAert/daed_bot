@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -21,20 +21,17 @@ from states.task_states import ReviewGenplanCorrectionFSM
 from states.task_states import AssignARFSM
 import zipfile
 import shutil
+import re
 load_dotenv()
 router = Router()
 ALLOWED_STATUSES = {
     "assigned_vk", "approved_gs", "assigned_gs", "approved_ovik", "approve_ovik",
     "assigned_ovik", "approved_kj", "approve_kj", "assigned_kj", "approved_ss",
     "gip_ss_approve", "assigned_ss", "approved_eom", "gip_eom_approve", "assigned_eom",
-    "approved_vk", "gip_vk_approve"
+    "approved_vk", "gip_vk_approve", "waiting_cl"
 }
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 # Initialize the client bot with the token from environment variables
-client_bot = Bot(
-    token=os.getenv("CLIENT_BOT_TOKEN"),
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 
 async def send_orders_to(recipient, send_method):
     orders = await get_all_orders()
@@ -69,23 +66,43 @@ async def send_orders_to(recipient, send_method):
                 InlineKeyboardButton(text="📤 Передать генпланисту", callback_data=f"assign_genplan:{order['id']}")
             ]]
         elif order["status"] in ALLOWED_STATUSES:
-            keyboard_buttons = [
-                [
-                    InlineKeyboardButton(text="📤 Передать ОВиК/ТС", callback_data=f"assign_ovik:{order['id']}"),
+            keyboard_buttons = []
+
+            if not await is_section_task_done(order["id"], "овик"):
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text="📤 Передать ОВиК/ТС", callback_data=f"assign_ovik:{order['id']}")
+                ])
+            if not await is_section_task_done(order["id"], "вк"):
+                keyboard_buttons.append([
                     InlineKeyboardButton(text="📤 Передать ВК/НВК", callback_data=f"assign_vk:{order['id']}")
-                ],
-                [
-                    InlineKeyboardButton(text="📤 Передать ВГС/НГС", callback_data=f"assign_gs:{order['id']}"),
+                ])
+            if not await is_section_task_done(order["id"], "гс"):
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text="📤 Передать ВГС/НГС", callback_data=f"assign_gs:{order['id']}")
+                ])
+            if not await is_section_task_done(order["id"], "кж"):
+                keyboard_buttons.append([
                     InlineKeyboardButton(text="📤 Передать КЖ", callback_data=f"assign_kj:{order['id']}")
-                ],
-                [
-                    InlineKeyboardButton(text="📤 Передать ЭОМ", callback_data=f"assign_eom:{order['id']}"),
+                ])
+            if not await is_section_task_done(order["id"], "эом"):
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text="📤 Передать ЭОМ", callback_data=f"assign_eom:{order['id']}")
+                ])
+            if not await is_section_task_done(order["id"], "сс"):
+                keyboard_buttons.append([
                     InlineKeyboardButton(text="📤 Передать СС", callback_data=f"assign_ss:{order['id']}")
-                ],
-                [
-                    InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}")
-                ]
-            ]
+                ])
+
+            keyboard_buttons.append([
+                InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}")
+            ])
+
+            # Добавляем кнопку сметчику, если ВСЕ задачи по разделам выполнены
+            if await are_all_sections_done(order["id"]):
+                keyboard_buttons.append([
+                    InlineKeyboardButton(text="📤 Передать Сметчику", callback_data=f"assign_sm:{order['id']}")
+                ])
+
             
         else:
                 keyboard_buttons = []
@@ -179,7 +196,7 @@ async def process_edit_comment(message: Message, state: FSMContext):
         fix_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 Загрузить исправленный архив", callback_data=f"start_fix:{order['id']}")]
         ])
-        await client_bot.send_message(
+        await message.bot.send_message(
             chat_id=customer_telegram_id,
             text=(
                 f"✏️ Ваш заказ требует исправлений.\n"
@@ -205,18 +222,21 @@ async def show_orders_callback(callback: CallbackQuery):
 
 # 💬 Общая функция отправки файлов
 async def send_project_files(order_title: str, recipient_telegram_id: int, bot, role: str):
-    folder_path = os.path.join(BASE_DOC_PATH, order_title)
+    # Тоже очищаем для consistency
+    safe_title = re.sub(r'[^\w\-]', '_', order_title)
+
+    folder_path = os.path.join(BASE_DOC_PATH, safe_title)
 
     if not os.path.exists(folder_path):
-        await bot.send_message(recipient_telegram_id, f"❗️ Папка проекта {order_title} не найдена.")
+        await bot.send_message(recipient_telegram_id, f"❗️ Папка проекта <b>{order_title}</b> не найдена.", parse_mode="HTML")
         return
 
     if not os.listdir(folder_path):
-        await bot.send_message(recipient_telegram_id, f"📁 Папка проекта {order_title} пуста.")
+        await bot.send_message(recipient_telegram_id, f"📁 Папка проекта <b>{order_title}</b> пуста.", parse_mode="HTML")
         return
 
     # 📁 Временный ZIP архив
-    zip_filename = f"{order_title}.zip"
+    zip_filename = f"{safe_title}.zip"
     zip_path = os.path.join(BASE_DOC_PATH, "temporary", zip_filename)
 
     os.makedirs(os.path.dirname(zip_path), exist_ok=True)
@@ -229,7 +249,6 @@ async def send_project_files(order_title: str, recipient_telegram_id: int, bot, 
                 rel_path = os.path.relpath(abs_path, folder_path)
                 zipf.write(abs_path, arcname=rel_path)
 
-    # 📤 Отправка архива
     await bot.send_message(
         recipient_telegram_id,
         f"📦 Передан архив проекта <b>{order_title}</b> для роли: {role}",
@@ -237,12 +256,10 @@ async def send_project_files(order_title: str, recipient_telegram_id: int, bot, 
     )
     await bot.send_document(recipient_telegram_id, FSInputFile(zip_path))
 
-    # ✅ При желании: удалить ZIP после отправки
     try:
         os.remove(zip_path)
     except Exception as e:
         print(f"[WARN] Не удалось удалить временный ZIP: {e}")
-
 # ✅ Передать расчетчику
 @router.callback_query(F.data.startswith("assign_calculator:"))
 async def assign_to_calculator(callback: CallbackQuery, state: FSMContext):
@@ -421,7 +438,7 @@ async def get_genplan_deadline(message: Message, state: FSMContext):
     order = await get_order_by_id(order_id)
     order_title = order["title"]
     genplan = await get_specialist_by_section("гп")
-
+    genplan_name = genplan.get("full_name", "Без имени")
     if not genplan:
         await message.answer("❗ Генпланист не найден.")
         await state.clear()
@@ -439,9 +456,9 @@ async def get_genplan_deadline(message: Message, state: FSMContext):
     await send_project_files(order_title, genplan["telegram_id"], message.bot, "гп")
 
     await message.answer(
-        f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan['full_name']} со сроком {days} дн.",
-        parse_mode="HTML"
-    )
+    f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan_name} со сроком {days} дн.",
+    parse_mode="HTML"
+)
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve_genplan:"))

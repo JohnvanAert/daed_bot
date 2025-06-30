@@ -1,28 +1,13 @@
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from database import get_orders_by_customer_telegram
-from aiogram.fsm.context import FSMContext
-from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from database import get_orders_by_customer_telegram, get_order_by_id, get_specialist_by_section, update_order_status, get_order_pending_fix_by_customer
 from aiogram.fsm.context import FSMContext
 from states.review_states import ReviewCorrectionFSM
-from database import get_order_by_id, get_specialist_by_section, update_order_status, get_order_pending_fix_by_customer
-from states.review_states import ReviewCorrectionFSM
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
-import os
-from aiogram import Bot
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
 from aiogram.types import FSInputFile
 from tempfile import NamedTemporaryFile
 load_dotenv()  # Загружаем переменные окружения
 
-# Initialize the PSD bot
-psd_bot = Bot(
-    token=os.getenv("DAED_BOT_TOKEN"),
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 router = Router()
 
 @router.message(F.text == "📦 Мои заказы")
@@ -94,7 +79,7 @@ async def receive_customer_zip(message: Message, state: FSMContext):
         file_to_send = FSInputFile(tmp.name, filename=document.file_name)
 
         # Отправляем ГИПу
-        await psd_bot.send_document(
+        await message.bot.send_document(
             chat_id=order["gip_id"],
             document=file_to_send,
             caption=f"📥 Получен ZIP-файл ИРД от заказчика по заказу: <b>{order['title']}</b>",
@@ -105,7 +90,7 @@ async def receive_customer_zip(message: Message, state: FSMContext):
         # Отправляем специалисту
         specialist = await get_specialist_by_section("эп")
         if specialist:
-            await psd_bot.send_document(
+            await message.bot.send_document(
                 chat_id=specialist["telegram_id"],
                 document=file_to_send,
                 caption=f"📥 Получен ZIP-файл ИРД от заказчика по заказу: <b>{order['title']}</b>",
@@ -143,7 +128,6 @@ async def receive_fixed_zip_from_customer(message: Message, state: FSMContext):
         tmp.write(downloaded.read())
         tmp_path = tmp.name
 
-    from aiogram.types import FSInputFile
     fs_doc = FSInputFile(tmp_path, filename=document.file_name)
     # Инлайн-кнопки для ГИПа
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -153,7 +137,7 @@ async def receive_fixed_zip_from_customer(message: Message, state: FSMContext):
     
     # Отправляем через psd_bot
     for user_id in [order["gip_id"], specialist["telegram_id"]]:
-        await psd_bot.send_document(
+        await message.bot.send_document(
             chat_id=user_id,
             document=fs_doc,
             caption=f"📥 Получен исправленный архив от заказчика по заказу: <b>{order['title']}</b>",

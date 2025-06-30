@@ -9,8 +9,6 @@ import os
 import re
 from database import get_all_gips, get_order_by_customer_id, update_order_document
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 
 router = Router()
 
@@ -78,7 +76,7 @@ async def process_document(message: Message, state: FSMContext):
         except Exception as e:
             print(f"Не удалось отправить сообщение ГИПу {gip_id}: {e}")
 
-    await message.answer("✅ Заказ успешно создан!", reply_markup=ReplyKeyboardRemove())
+    await message.answer("✅ Заказ успешно создан!")
     await state.clear()
 
 @router.message(F.document, FixOrder.waiting_for_document)

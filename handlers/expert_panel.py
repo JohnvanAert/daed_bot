@@ -8,7 +8,9 @@ from aiogram.fsm.state import StatesGroup, State
 from database import (
     get_expert_tasks,
     update_expert_note_file,  # нужно реализовать
-    get_task_by_id             # нужно реализовать
+    get_task_by_id,
+    update_task_status_by_id,
+    mark_order_section_done
 )
 import os
 
@@ -38,8 +40,19 @@ async def show_expert_tasks(message: Message):
         )
 
         buttons = []
+
+        # показать кнопку только если статус — sent_to_experts
         if task['order_status'] == "sent_to_experts":
-            buttons.append(InlineKeyboardButton(text="📎 Прикрепить замечания", callback_data=f"send_note:{task['task_id']}"))
+            if task['expert_note_url']:  # замечание прикреплено
+                buttons.append(InlineKeyboardButton(
+                    text="✅ Одобрить",
+                    callback_data=f"approve_note:{task['task_id']}"
+                ))
+            else:
+                buttons.append(InlineKeyboardButton(
+                    text="📎 Прикрепить замечания",
+                    callback_data=f"send_note:{task['task_id']}"
+                ))
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
 
@@ -53,7 +66,6 @@ async def show_expert_tasks(message: Message):
             )
         except Exception as e:
             await message.answer(f"⚠️ Файл не найден по пути: {doc_path}")
-
 
 @router.callback_query(F.data.startswith("send_note:"))
 async def start_send_note(callback: CallbackQuery, state: FSMContext):
@@ -88,3 +100,23 @@ async def receive_note_file(message: Message, state: FSMContext):
 
     await message.answer("✅ Замечания успешно прикреплены.")
     await state.clear()
+
+@router.callback_query(F.data.startswith("approve_note:"))
+async def handle_approve_note(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+
+    # Получаем задачу
+    task = await get_task_by_id(task_id)
+    order_id = task["order_id"]
+    section = task["section"].lower()
+
+    # Обновляем статус задачи
+    await update_task_status_by_id(task_id, "approved_by_expert")
+
+    # Универсально обновим поле <section>_status у заказа
+    await mark_order_section_done(order_id, section)
+
+    # Удаляем кнопки и уведомляем
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(f"✅ Раздел {section.upper()} одобрен экспертом.")
+    await callback.answer("Одобрено ✅", show_alert=True)

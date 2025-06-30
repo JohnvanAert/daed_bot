@@ -1029,3 +1029,45 @@ async def get_order_pending_fix_by_customer(customer_telegram_id: int):
             LIMIT 1
         """, customer_telegram_id)
 
+
+async def update_task_status_by_id(task_id: int, new_status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET status = $1
+            WHERE id = $2
+        """, new_status, task_id)
+
+
+async def mark_order_section_done(order_id: int, section: str):
+    # Например, section = "эом" → эом_status = 'done'
+    section_field = f"{section}_status"
+
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+            UPDATE orders
+            SET {section_field} = 'done'
+            WHERE id = $1
+        """, order_id)
+
+
+
+async def is_section_task_done(order_id: int, section: str):
+    async with pool.acquire() as conn:
+        result = await conn.fetchval("""
+            SELECT status FROM tasks
+            WHERE order_id = $1 AND section = $2
+        """, order_id, section.upper())  # section хранится в верхнем регистре, как "КЖ", "ОВИК" и т.п.
+        return result == "сделано"
+
+
+async def are_all_sections_done(order_id: int):
+    required_sections = ['овик', 'вк', 'гс', 'кж', 'эом', 'сс']
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT section, status FROM tasks
+            WHERE order_id = $1
+        """, order_id)
+
+    done_sections = {row['section'].lower() for row in rows if row['status'].lower() == 'сделано'}
+    return all(section in done_sections for section in required_sections)

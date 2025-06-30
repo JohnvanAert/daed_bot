@@ -10,26 +10,21 @@ from aiogram.types import Document
 from datetime import date, timedelta, datetime
 from dotenv import load_dotenv
 from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from states.ar_correction import ReviewArCorrectionFSM
 import shutil
 from states.task_states import AssignARFSM, AssignKJFSM, ReviewKjCorrectionFSM, AssignOVIKFSM, ReviewOvikCorrectionFSM, AssignGSFSM, ReviewGSCorrectionFSM, AssignVKFSM, ReviewVkCorrectionFSM, AssignEOMFSM, ReviewEomCorrectionFSM, AssignSSFSM, ReviewSSCorrectionFSM
 
 load_dotenv()
-EXPERT_API_TOKEN = os.getenv("EXPERT_BOT_TOKEN")  
+
 router = Router()
-# Initialize the client bot with the token from environment variables
-client_bot = Bot(
-    token=os.getenv("CLIENT_BOT_TOKEN"),
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+
 class ReviewCorrectionFSM(StatesGroup):
-    waiting_for_comment = State()
-    waiting_for_fixed_file = State()
-    waiting_for_customer_question = State()
-    waiting_for_customer_zip = State()
-    waiting_for_customer_error_comment = State()
+    waiting_for_comments = State()
+    waiting_for_fixed_files = State()
+    waiting_for_customer_questions = State()
+    waiting_for_customer_zips = State()
+    waiting_for_customer_error_comments = State()
 
 @router.callback_query(F.data.startswith("gip_approve:"))
 async def handle_gip_approval(callback: CallbackQuery):
@@ -47,7 +42,7 @@ async def handle_gip_approval(callback: CallbackQuery):
         )
 
         # ✅ Отправляем через client_bot
-        await client_bot.send_document(
+        await callback.message.bot.send_document(
             chat_id=customer_id,
             document=FSInputFile(ep_file_path),
             caption=caption
@@ -63,13 +58,13 @@ async def handle_gip_approval(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("gip_reject:"))
 async def handle_gip_rejection(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
-    await state.set_state(ReviewCorrectionFSM.waiting_for_comment)
+    await state.set_state(ReviewCorrectionFSM.waiting_for_comments)
     await state.update_data(order_id=order_id)
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer("❗ Напишите комментарий с замечаниями по ЭП:")
 
-@router.message(ReviewCorrectionFSM.waiting_for_comment)
+@router.message(ReviewCorrectionFSM.waiting_for_comments)
 async def send_correction_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
@@ -102,12 +97,12 @@ async def send_correction_comment(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("resubmit_ep:"))
 async def handle_resubmit_ep(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
-    await state.set_state(ReviewCorrectionFSM.waiting_for_fixed_file)
+    await state.set_state(ReviewCorrectionFSM.waiting_for_fixed_files)
     await state.update_data(order_id=order_id)
     await callback.message.answer("📎 Прикрепите исправленный PDF файл ЭП:")
     await callback.answer()
 
-@router.message(ReviewCorrectionFSM.waiting_for_fixed_file, F.document)
+@router.message(ReviewCorrectionFSM.waiting_for_fixed_files, F.document)
 async def receive_fixed_ep(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
@@ -133,12 +128,12 @@ async def receive_fixed_ep(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("docs_error:"))
 async def handle_docs_error(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
-    await state.set_state(ReviewCorrectionFSM.waiting_for_customer_error_comment)
+    await state.set_state(ReviewCorrectionFSM.waiting_for_customer_error_comments)
     await state.update_data(order_id=order_id)
     await callback.message.answer("✏️ Напишите, пожалуйста, комментарий для заказчика (что не так с документами):")
     await callback.answer()
 
-@router.message(ReviewCorrectionFSM.waiting_for_customer_error_comment)
+@router.message(ReviewCorrectionFSM.waiting_for_customer_error_comments)
 async def send_docs_error_to_customer(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
@@ -150,7 +145,7 @@ async def send_docs_error_to_customer(message: Message, state: FSMContext):
     # 🔄 Обновим статус заказа
     await update_order_status(order_id, "pending_correction")
 
-    await client_bot.send_message(
+    await message.bot.send_document(
         chat_id=customer_id,
         text=(
             f"❗ <b>Ошибка в документах</b> по заказу <b>{order['title']}</b>:\n\n"
@@ -182,7 +177,7 @@ async def handle_docs_accept(callback: CallbackQuery):
     await callback.answer("Документы приняты ✅", show_alert=True)
 
 
-@router.message(ReviewCorrectionFSM.waiting_for_customer_zip, F.document)
+@router.message(ReviewCorrectionFSM.waiting_for_customer_zips, F.document)
 async def receive_customer_zip(message: Message, state: FSMContext):
     document = message.document
 
@@ -197,7 +192,7 @@ async def receive_customer_zip(message: Message, state: FSMContext):
         await message.bot.send_document(
             chat_id=user_id,
             document=document.file_id,  # <-- важно: здесь используется document.file_id
-            caption=f"📥 Получен исправленный архив от заказчика по заказу: <b>{order['title']}</b>",
+            caption=f"📥 Получен исправленный архив 2 от заказчика по заказу: <b>{order['title']}</b>",
             parse_mode="HTML"
         )
     
@@ -207,13 +202,13 @@ async def receive_customer_zip(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("docs_error:"))
 async def handle_docs_error(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
-    await state.set_state(ReviewCorrectionFSM.waiting_for_customer_error_comment)
+    await state.set_state(ReviewCorrectionFSM.waiting_for_customer_error_comments)
     await state.update_data(order_id=order_id)
     await callback.message.answer("✏️ Укажите, что не так с ИРД:")
     await callback.answer()
 
 
-@router.message(ReviewCorrectionFSM.waiting_for_customer_error_comment)
+@router.message(ReviewCorrectionFSM.waiting_for_customer_error_comments)
 async def handle_docs_error_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
@@ -224,7 +219,7 @@ async def handle_docs_error_comment(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="📎 Отправить исправленные ИРД", callback_data=f"send_ird:{order_id}")]
     ])
 
-    await client_bot.send_message(
+    await message.bot.send_document(
         chat_id=customer_id,
         text=f"❗ <b>Ошибка в ИРД</b> по заказу <b>{order['title']}</b>:\n\n{message.text.strip()}",
         parse_mode="HTML",
@@ -1386,7 +1381,6 @@ async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
 
     order_id = int(callback.data.split(":")[1])
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
-    expert_bot = Bot(token=EXPERT_API_TOKEN)
 
     # 1. Получить список всех экспертов (с ролями и разделами)
     experts = await get_all_experts()  # Например: [{'telegram_id': ..., 'section': 'ар'}, ...]
@@ -1407,7 +1401,7 @@ async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
 
         # 4. Отправляем файл эксперту
         try:
-            await expert_bot.send_document(
+            await callback.message.bot.send_document(
                 chat_id=tg_id,
                 document=FSInputFile(abs_path),
                 caption=f"📩 Заказ #{order_id} — раздел {section.upper()}.\nПросьба ознакомиться и при необходимости написать замечания."
@@ -1416,5 +1410,6 @@ async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
         except Exception as e:
             print(f"Ошибка при отправке {section} эксперту {tg_id}: {e}")
     await update_order_status(order_id, "sent_to_experts")
+    await update_task_status(order_id, "Передано экспертам")
     await callback.message.answer("✅ Все разделы отправлены экспертам.")
     await callback.answer("Отправлено экспертам ✅", show_alert=True)

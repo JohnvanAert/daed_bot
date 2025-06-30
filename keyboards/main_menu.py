@@ -1,15 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
-def customer_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="➕ Создать заказ")],
-            [KeyboardButton(text="📦 Мои заказы")]
-        ],
-        resize_keyboard=True
-    )
-
 def send_main_menu(message, role: str, section: str = None):
     section_menus = {
         "эп": [
