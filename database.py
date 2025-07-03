@@ -1071,3 +1071,112 @@ async def are_all_sections_done(order_id: int):
 
     done_sections = {row['section'].lower() for row in rows if row['status'].lower() == 'сделано'}
     return all(section in done_sections for section in required_sections)
+
+
+async def add_bonus_or_penalty(user_id, order_id, type, description):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO bonuses_penalties (user_id, order_id, type, description)
+            VALUES ($1, $2, $3, $4)
+        """, user_id, order_id, type, description)
+
+async def check_existing_penalty(user_id, order_id):
+    async with pool.acquire() as conn:
+        result = await conn.fetchval("""
+            SELECT 1 FROM bonuses_penalties
+            WHERE user_id=$1 AND order_id=$2 AND type='penalty'
+        """, user_id, order_id)
+        return bool(result)
+
+async def get_user_bonuses_and_penalties(user_id):
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT type, description, order_id
+            FROM bonuses_penalties
+            WHERE user_id=$1
+        """, user_id)
+    
+# database.py
+async def get_user_profile(telegram_id):
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("""
+            SELECT full_name, iin AS iin, telegram_id, NULL AS phone, NULL AS email, role, section, registered_at
+            FROM users
+            WHERE telegram_id = $1
+            UNION
+            SELECT full_name, iin_or_bin AS iin, telegram_id, phone, email, 'customer' AS role, NULL AS section, registered_at
+            FROM customers
+            WHERE telegram_id = $1
+            UNION
+            SELECT full_name, NULL AS iin, telegram_id, NULL AS phone, NULL AS email, 'expert' AS role, NULL AS section, created_at AS registered_at
+            FROM experts
+            WHERE telegram_id = $1
+        """, telegram_id)
+        return user
+
+
+async def get_all_users_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, full_name FROM users ORDER BY id
+        """)
+
+async def update_user_field(user_id: int, field: str, value):
+    allowed_fields = {"full_name", "iin", "phone", "role", "section"}
+    if field not in allowed_fields:
+        raise ValueError("Попытка изменить запрещённое поле.")
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+            UPDATE users
+            SET {field} = $1
+            WHERE id = $2
+        """, value, user_id)
+
+
+async def get_all_users_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, full_name FROM users ORDER BY id
+        """)
+
+
+async def move_user_to_experts(user_id):
+    async with pool.acquire() as conn:
+        # Получим данные пользователя
+        user = await conn.fetchrow("SELECT telegram_id, full_name FROM users WHERE id = $1", user_id)
+        if user:
+            # Добавим в таблицу экспертов
+            await conn.execute(
+                "INSERT INTO experts (telegram_id, full_name) VALUES ($1, $2)",
+                user["telegram_id"], user["full_name"]
+            )
+            # Удалим из users
+            await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+
+async def archive_user_by_id(user_id):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET is_archived = TRUE WHERE id = $1",
+            user_id
+        )
+
+async def get_all_users_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, full_name, telegram_id, section, role
+            FROM users
+            WHERE is_archived = FALSE
+            ORDER BY id
+        """)
+
+async def get_active_users_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM users WHERE archived = FALSE ORDER BY id")
+
+async def get_archived_users_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM users WHERE archived = TRUE ORDER BY id")
+
+async def restore_user(user_id):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET archived = FALSE WHERE id = $1", user_id)

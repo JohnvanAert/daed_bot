@@ -4,7 +4,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from asyncio import run
 from database import connect_db
-from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, gs_panel, kj_panel, eom_panel, ss_panel, estimator_panel, gip_review, ar_panel, register_expert, client_register, client_create_orders, client_order
+from handlers import start, registration, tasks, assign_specialist, view_orders, assign_executor, assign_sketch, ep_panel, ar_executor, calculator_panel, genplan_panel, ovik_panel, vk_panel, gs_panel, kj_panel, eom_panel, ss_panel, estimator_panel, gip_review, ar_panel, register_expert, client_register, client_create_orders, client_order, profile, edit_users
 from dotenv import load_dotenv
 import os
 from aiogram import Router
@@ -46,6 +46,10 @@ dp.include_router(register_expert.router)
 dp.include_router(client_register.router)
 dp.include_router(client_create_orders.router)
 dp.include_router(client_order.router)
+dp.include_router(profile.router)
+dp.include_router(edit_users.router)
+
+
 async def main():
     await connect_db()
     aiocron.crontab('0 9 * * *', func=lambda: run_deadline_check(bot))

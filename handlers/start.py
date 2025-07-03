@@ -25,12 +25,24 @@ async def cmd_start(message: Message, state: FSMContext):
     # 1. Заказчик
     customer = await get_customer_by_telegram_id(user_id)
     if customer:
+        if customer.get("archived"):  # предполагается что в таблице customers есть поле archived BOOLEAN
+            await message.answer(
+                "⚠️ Ваша учетная запись в архиве. Обратитесь к администратору для восстановления."
+            )
+            return
+
         await message.answer("👋 Добро пожаловать, уважаемый заказчик!", reply_markup=customer_menu())
         return
 
     # 2. Эксперт
     expert = await get_expert_by_telegram_id(user_id)
     if expert:
+        if expert.get("archived"):  # предполагается что и для экспертов есть поле archived
+            await message.answer(
+                "⚠️ Ваша учетная запись в архиве. Обратитесь к администратору для восстановления."
+            )
+            return
+
         await message.answer(
             f"👋 Добро пожаловать, <b>{expert['full_name']}</b>! Вы уже зарегистрированы как эксперт.",
             reply_markup=ReplyKeyboardRemove(),
@@ -42,6 +54,11 @@ async def cmd_start(message: Message, state: FSMContext):
     # 3. Исполнитель / специалист
     user = await get_user_by_telegram_id(user_id)
     if user:
+        if user.get("is_archived"):
+            await send_main_menu(message, role=user["role"], section=user["section"], archived=True)
+            return
+
+
         await message.answer(
             f"👋 Вы уже зарегистрированы как <b>{user['role'].capitalize()}</b>.",
             reply_markup=ReplyKeyboardRemove(),

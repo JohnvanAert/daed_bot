@@ -120,18 +120,33 @@ async def send_orders_to(recipient, send_method):
 async def accept_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
     await update_order_status(order_id, "approved")
-    gip_id = callback.from_user.id  # получаем telegram ID ГИПа
+    gip_id = callback.from_user.id
     await set_order_gip(order_id, gip_id)
+
+    order = await get_order_by_id(order_id)
+    title = order["title"]
+    safe_title = re.sub(r'[^\w\-]', '_', title)
+    project_folder = os.path.join("documents", safe_title)
+    os.makedirs(project_folder, exist_ok=True)
+
+    src_file_path = order["document_url"]
+    dest_file_path = os.path.join(project_folder, "ird1_file.zip")
+
+    try:
+        shutil.copy(src_file_path, dest_file_path)
+        await callback.message.answer(f"📦 Исходный файл заказчика сохранён как <b>{safe_title}/ird1_file.zip</b>.", parse_mode="HTML")
+    except Exception as e:
+        await callback.message.answer(f"❗ Ошибка при копировании файла: {e}")
+        return
+
+    # UI
     original_caption = callback.message.caption or ""
     updated_caption = original_caption + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order_id}")]
-        ])
+        [InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order_id}")]
+    ])
     await callback.message.edit_caption(caption=updated_caption, reply_markup=new_keyboard)
     await callback.answer("Заказ принят ✅", show_alert=True)
-    await callback.message.answer("✅ Заказ был принят. Теперь можно передать его эскизчику.")
-
-
 
 
 @router.callback_query(F.data.startswith("order_reject:"))
@@ -546,3 +561,43 @@ async def handle_genplan_correction_comment(message: Message, state: FSMContext)
 
     await message.answer("✅ Замечания отправлены генпланисту.")
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("approve_estimate:"))
+async def handle_approve_estimate(callback: CallbackQuery):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    customer_id = await get_customer_telegram_id(order["customer_id"])
+
+    # сохраняем смету в папку проекта
+    project_folder = os.path.join("documents", re.sub(r'[^\w\-]', '_', order["title"]))
+    os.makedirs(project_folder, exist_ok=True)
+    estimate_file_path = os.path.join(project_folder, "estimate_files.zip")
+
+    # тут подразумевается что до этого уже был файл с расчетами, и мы его копируем/переносим
+    # например если файл был в temp, его можно переместить
+    shutil.copy("temp/estimate_ready.zip", estimate_file_path)  # или куда ты его сохраняешь
+
+    # собираем финальный ZIP со всеми файлами проекта
+    final_zip_path = os.path.join(project_folder, "final_project.zip")
+    with zipfile.ZipFile(final_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(project_folder):
+            for file in files:
+                if file != "final_project.zip":  # чтобы не включать себя самого
+                    abs_file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(abs_file_path, project_folder)
+                    zipf.write(abs_file_path, arcname=rel_path)
+
+    # отправляем заказчику
+    await callback.bot.send_message(
+        customer_id,
+        f"✅ Ваш проект <b>{order['title']}</b> полностью завершён!\n📦 Прилагаем финальный архив.",
+        parse_mode="HTML"
+    )
+    await callback.bot.send_document(
+        customer_id,
+        FSInputFile(final_zip_path)
+    )
+
+    await callback.message.answer("✅ Смета утверждена, финальный архив отправлен заказчику.")
+    await callback.answer("Готово ✅", show_alert=True)

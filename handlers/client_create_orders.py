@@ -34,21 +34,16 @@ async def process_description(message: Message, state: FSMContext):
 async def process_document(message: Message, state: FSMContext):
     file = message.document
     if not file.file_name.endswith(".zip"):
-        await message.answer("❗ Пожалуйста, загрузите архив в формате .zip.")
+        await message.answer("❗️ Пожалуйста, загрузите архив в формате .zip.")
         return
 
     data = await state.get_data()
     title = data.get("title", "UnnamedProject")
 
-    # Очистим имя проекта от недопустимых символов (оставим только буквы, цифры, _, -)
-    safe_title = re.sub(r'[^\w\-]', '_', title)
-
-    # Создаём папку под проект
-    project_folder = os.path.join("documents", safe_title)
-    os.makedirs(project_folder, exist_ok=True)
-
-    # Полный путь для сохранения файла
-    file_path = os.path.join(project_folder, file.file_name)
+    # Временный файл
+    tmp_folder = os.path.join("documents", "tmp")
+    os.makedirs(tmp_folder, exist_ok=True)
+    file_path = os.path.join(tmp_folder, file.file_name)
     await message.bot.download(file, destination=file_path)
 
     customer = await get_customer_by_telegram_id(message.from_user.id)
@@ -56,7 +51,7 @@ async def process_document(message: Message, state: FSMContext):
     await add_order(
         title=title,
         description=data["description"],
-        document_url=file_path,
+        document_url=file_path,  # пока просто путь к временной папке
         customer_id=customer["id"]
     )
 # 🔔 Уведомление ГИПам

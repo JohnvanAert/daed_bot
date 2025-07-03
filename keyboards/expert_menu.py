@@ -1,10 +1,12 @@
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 async def send_expert_main_menu(message: Message):
+    profile_button = [KeyboardButton(text="👤 Мой профиль")]
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📂 Мои заказы")],
-            [KeyboardButton(text="🆘 Поддержка")]
+            [KeyboardButton(text="🆘 Поддержка")],
+            profile_button
         ],
         resize_keyboard=True
     )
