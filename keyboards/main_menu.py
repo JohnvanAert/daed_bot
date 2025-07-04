@@ -1,8 +1,8 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
-def send_main_menu(message, role: str, section: str = None, archived=False):
-    if archived:
+def send_main_menu(message, role: str, section: str = None, is_archived=False):
+    if is_archived:
         return message.answer(
             "⚠️ Ваша учетная запись в архиве. Обратитесь к администратору для восстановления.",
             reply_markup=ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[[KeyboardButton(text="👤 Мой профиль")]])

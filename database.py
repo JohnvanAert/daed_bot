@@ -1156,9 +1156,10 @@ async def move_user_to_experts(user_id):
 async def archive_user_by_id(user_id):
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE users SET is_archived = TRUE WHERE id = $1",
+            "UPDATE users SET is_archived = TRUE, section = NULL WHERE id = $1",
             user_id
         )
+
 
 async def get_all_users_sorted_by_id():
     async with pool.acquire() as conn:
@@ -1171,12 +1172,12 @@ async def get_all_users_sorted_by_id():
 
 async def get_active_users_sorted_by_id():
     async with pool.acquire() as conn:
-        return await conn.fetch("SELECT * FROM users WHERE archived = FALSE ORDER BY id")
+        return await conn.fetch("SELECT * FROM users WHERE is_archived = FALSE ORDER BY id")
 
 async def get_archived_users_sorted_by_id():
     async with pool.acquire() as conn:
-        return await conn.fetch("SELECT * FROM users WHERE archived = TRUE ORDER BY id")
+        return await conn.fetch("SELECT * FROM users WHERE is_archived = TRUE ORDER BY id")
 
 async def restore_user(user_id):
     async with pool.acquire() as conn:
-        await conn.execute("UPDATE users SET archived = FALSE WHERE id = $1", user_id)
+        await conn.execute("UPDATE users SET is_archived = FALSE WHERE id = $1", user_id)

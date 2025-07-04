@@ -74,6 +74,11 @@ async def show_page_common(message: Message, page: int, users, edit, is_archive=
         ))
     if nav_buttons:
         kb_buttons.append(nav_buttons)
+    
+    if not is_archive:
+        kb_buttons.append([
+            InlineKeyboardButton(text="📁 Архив пользователей", callback_data="archive_page:0")
+        ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
     title = "📁 Архив пользователей" if is_archive else "📋 Пользователи"
@@ -96,8 +101,7 @@ async def select_user_to_edit(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="📱 Изменить телефон", callback_data="edit_field:phone")],
         [InlineKeyboardButton(text="📝 Изменить роль", callback_data="edit_role")],
         [InlineKeyboardButton(text="🛠 Изменить секцию", callback_data="edit_section")],
-        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
-        [InlineKeyboardButton(text="📁 Архив пользователей", callback_data="archive_page:0")]
+        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")]
     ])
     await callback.message.edit_text(
         f"🔧 Что хотите изменить у пользователя ID <b>{user_id}</b>?",

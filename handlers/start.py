@@ -55,9 +55,10 @@ async def cmd_start(message: Message, state: FSMContext):
     user = await get_user_by_telegram_id(user_id)
     if user:
         if user.get("is_archived"):
-            await send_main_menu(message, role=user["role"], section=user["section"], archived=True)
+            await message.answer(
+                "⚠️ Ваша учетная запись в архиве. Обратитесь к администратору для восстановления."
+            )
             return
-
 
         await message.answer(
             f"👋 Вы уже зарегистрированы как <b>{user['role'].capitalize()}</b>.",
