@@ -11,11 +11,22 @@ USERS_PER_PAGE = 5
 class EditUserFSM(StatesGroup):
     waiting_for_new_value = State()
 
-# 🚀 Старт
+# ====== Старт панели выбора кого редактировать ======
 @router.message(F.text == "⚙️ Редактировать пользователей")
-async def edit_users_list_start(message: Message, state: FSMContext):
-    await show_users_page(message, page=0)
+async def edit_users_main(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👷 Исполнители/Специалисты", callback_data="edit_type:users")],
+        [InlineKeyboardButton(text="📦 Заказчики", callback_data="edit_type:customers")],
+        [InlineKeyboardButton(text="🎓 Эксперты", callback_data="edit_type:experts")]
+    ])
+    await message.answer("Кого хотите редактировать?", reply_markup=kb)
 
+
+@router.callback_query(F.data == "edit_type:users")
+async def edit_users_list(callback: CallbackQuery):
+    await show_users_page(callback.message, page=0, edit=True)
+    await callback.answer()
+    
 # 🔄 Переключение страниц
 @router.callback_query(F.data.startswith("users_page:"))
 async def paginate_users(callback: CallbackQuery):

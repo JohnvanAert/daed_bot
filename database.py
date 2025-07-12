@@ -1181,3 +1181,92 @@ async def get_archived_users_sorted_by_id():
 async def restore_user(user_id):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_archived = FALSE WHERE id = $1", user_id)
+
+async def get_my_customers():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name, iin_or_bin, telegram_id, phone, email, registered_at
+            FROM customers
+            ORDER BY id
+        """)
+        return [dict(row) for row in rows]
+
+
+async def get_all_customers():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM customers WHERE archived = FALSE ORDER BY id"
+        )
+        return [dict(r) for r in rows]
+
+async def get_all_experts():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, full_name
+            FROM experts
+            WHERE archived = FALSE
+            ORDER BY id
+        """)
+        return [dict(r) for r in rows]
+
+async def update_expert_field(expert_id, field, value):
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+            UPDATE experts SET {field} = $1 WHERE id = $2
+        """, value, expert_id)
+
+async def delete_expert_by_id(expert_id):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM experts WHERE id = $1", expert_id)
+
+
+async def update_customer_field(customer_id, field, value):
+    async with pool.acquire() as conn:
+        await conn.execute(f"""
+            UPDATE customers SET {field} = $1 WHERE id = $2
+        """, value, customer_id)
+
+
+async def archive_expert_by_id(expert_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE experts SET archived = TRUE WHERE id = $1",
+            expert_id
+        )
+
+async def restore_expert(expert_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE experts SET archived = FALSE WHERE id = $1",
+            expert_id
+        )
+
+# database.py
+async def get_archived_experts_sorted_by_id():
+    async with pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM experts WHERE archived = TRUE ORDER BY id")
+
+
+# Получение всех архивированных заказчиков, отсортированных по ID
+async def get_archived_customers_sorted_by_id():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM customers WHERE archived = TRUE ORDER BY id"
+        )
+        return [dict(r) for r in rows]
+
+# Архивирование заказчика по ID
+async def archive_customer_by_id(customer_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE customers SET archived = TRUE WHERE id = $1",
+            customer_id
+        )
+
+# Восстановление заказчика по ID
+async def restore_customer(customer_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE customers SET archived = FALSE WHERE id = $1",
+            customer_id
+        )
