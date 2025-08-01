@@ -41,7 +41,7 @@ async def process_document(message: Message, state: FSMContext):
     title = data.get("title", "UnnamedProject")
 
     # Временный файл
-    tmp_folder = os.path.join("documents", "tmp")
+    tmp_folder = os.path.join("documents", "temporary")  # ✔ правильноы
     os.makedirs(tmp_folder, exist_ok=True)
     file_path = os.path.join(tmp_folder, file.file_name)
     await message.bot.download(file, destination=file_path)
@@ -54,6 +54,7 @@ async def process_document(message: Message, state: FSMContext):
         document_url=file_path,  # пока просто путь к временной папке
         customer_id=customer["id"]
     )
+    
 # 🔔 Уведомление ГИПам
     gip_ids = await get_all_gips()
     for gip_id in gip_ids:

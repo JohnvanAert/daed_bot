@@ -550,15 +550,19 @@ async def get_genplan_task_document(order_id: int) -> str | None:
         if row:
             return row["document_url"]
         return None
-
 async def get_calc_task_document(order_id: int) -> str | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            SELECT document_url FROM tasks
-            WHERE order_id = $1 AND section = 'рс'
+            SELECT document_url
+            FROM tasks
+            WHERE order_id = $1 AND section = 'рс' AND document_url IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 1
         """, order_id)
-        return row["document_url"] if row else None
-
+        if row:
+            return row["document_url"]
+        return None
+    
 async def update_task_document_path(order_id: int, section: str, new_path: str):
     async with pool.acquire() as conn:
         await conn.execute("""
@@ -1270,3 +1274,27 @@ async def restore_customer(customer_id: int):
             "UPDATE customers SET archived = FALSE WHERE id = $1",
             customer_id
         )
+
+
+async def update_order_document_url(order_id: int, new_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE orders SET document_url = $1 WHERE id = $2",
+            new_path, order_id
+        )
+
+async def update_task_document_url(order_id: int, section: str, document_url: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET document_url = $1
+            WHERE order_id = $2 AND section = $3
+        """, document_url, order_id, section)
+
+async def get_task_id_by_order_and_section(order_id: int, section: str) -> int | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id FROM tasks
+            WHERE order_id = $1 AND section = $2
+        """, order_id, section)
+        return row["id"] if row else None

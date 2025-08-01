@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -107,15 +107,61 @@ async def send_orders_to(recipient, send_method):
         else:
                 keyboard_buttons = []
 
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="📥 Скачать весь проект", callback_data=f"send_project_zip:{order['id']}")
+        ])
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        document_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
 
+        document_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
         if os.path.exists(document_path):
-            doc = FSInputFile(document_path)
-            await bot.send_document(chat_id=recipient.chat.id, document=doc, caption=text, reply_markup=keyboard)
+            await send_method(text, reply_markup=keyboard)
         else:
             await send_method(f"{text}\n\n⚠️ Документ не найден по пути: {document_path}", reply_markup=keyboard)
 
+@router.callback_query(F.data.startswith("send_project_zip:"))
+async def handle_send_project_zip(callback: CallbackQuery):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    order_title = order["title"]
+    
+    # Название папки — с подчёркиваниями вместо пробелов
+    folder_name = order_title.replace(" ", "_")
+    project_dir = os.path.join(BASE_DOC_PATH, folder_name)
+
+    if not os.path.exists(project_dir):
+        await callback.answer("❗ Папка проекта не найдена.", show_alert=True)
+        return
+
+    # Путь к временному ZIP-архиву
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_base_name = f"{folder_name}_{timestamp}"
+    zip_path = os.path.join(BASE_DOC_PATH, f"{zip_base_name}.zip")
+
+    # Создание архива
+    shutil.make_archive(
+        base_name=os.path.join(BASE_DOC_PATH, zip_base_name),
+        format="zip",
+        root_dir=project_dir
+    )
+
+    # Отправка архива пользователю
+    try:
+        await callback.message.bot.send_document(
+            chat_id=callback.message.chat.id,
+            document=FSInputFile(zip_path),
+            caption=f"📦 Архив проекта: <b>{order_title}</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.answer("⚠️ Не удалось отправить архив.", show_alert=True)
+        return
+    finally:
+        # Удаление архива после отправки
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+
+    await callback.answer("✅ Архив проекта отправлен.")
+    
 @router.callback_query(F.data.startswith("order_accept:"))
 async def accept_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
@@ -123,30 +169,38 @@ async def accept_order(callback: CallbackQuery):
     gip_id = callback.from_user.id
     await set_order_gip(order_id, gip_id)
 
+    # Получаем заказ и подготавливаем папку проекта
     order = await get_order_by_id(order_id)
     title = order["title"]
     safe_title = re.sub(r'[^\w\-]', '_', title)
     project_folder = os.path.join("documents", safe_title)
     os.makedirs(project_folder, exist_ok=True)
 
-    src_file_path = order["document_url"]
+    # Перемещаем исходный ZIP-файл
+    src_temp_file_path  = order["document_url"]  # Здесь пока ещё путь к временному файлу
     dest_file_path = os.path.join(project_folder, "ird1_file.zip")
 
     try:
-        shutil.copy(src_file_path, dest_file_path)
-        await callback.message.answer(f"📦 Исходный файл заказчика сохранён как <b>{safe_title}/ird1_file.zip</b>.", parse_mode="HTML")
+        shutil.copy(src_temp_file_path , dest_file_path)
+        # Сохраняем в БД путь к папке, а не к файлу
+        await update_order_document_url(order_id, project_folder)
+
+        await callback.message.answer(
+            f"📦 Исходный файл заказчика сохранён как <b>{safe_title}/ird1_file.zip</b>.",
+            parse_mode="HTML"
+        )
     except Exception as e:
         await callback.message.answer(f"❗ Ошибка при копировании файла: {e}")
         return
-
-    # UI
-    original_caption = callback.message.caption or ""
-    updated_caption = original_caption + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order_id}")]
     ])
-    await callback.message.edit_caption(caption=updated_caption, reply_markup=new_keyboard)
-    await callback.answer("Заказ принят ✅", show_alert=True)
+    if callback.message.caption:
+        updated_caption = callback.message.caption + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
+        await callback.message.edit_caption(caption=updated_caption, reply_markup=new_keyboard)
+    else:
+        updated_text = callback.message.text + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
+        await callback.message.edit_text(text=updated_text, reply_markup=new_keyboard)
 
 
 @router.callback_query(F.data.startswith("order_reject:"))
@@ -326,12 +380,13 @@ async def receive_deadline(message: Message, state: FSMContext):
 
     await message.answer("✅ Задание успешно создано и передано расчетчику.")
     await state.clear()
+
 @router.callback_query(F.data.startswith("approve_calc:"))
 async def handle_calc_approval(callback: CallbackQuery):
-
     order_id = int(callback.data.split(":")[1])
+    await callback.message.answer(f"📌 Расчёты. Одобряем заказ: {order_id}")
 
-    # 🗂 Обновляем статус заказа и задачи
+    # 🗂 Обновляем статусы
     await update_order_status(order_id, "waiting_cl")
     await update_task_status(order_id=order_id, section="рс", new_status="Сделано")
 
@@ -343,37 +398,57 @@ async def handle_calc_approval(callback: CallbackQuery):
             text=f"✅ Ваш расчёт по заказу #{order_id} принят ГИПом."
         )
 
-    # 📥 Получаем путь к файлу
-    relative_path = await get_calc_task_document(order_id)
-    if not relative_path:
-        await callback.message.answer("❗️ Не удалось найти файл расчёта в tasks.")
+    # Получаем путь к файлу из tasks.document_url
+    relative_task_file = await get_calc_task_document(order_id)
+
+    if not relative_task_file:
+        await callback.message.answer("❗️ Не найден файл Генплана (tasks.document_url).")
         return
 
-    # 📂 Пути
-    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
-    SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
+    # Абсолютный путь до корня проекта
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
 
+    # Путь к исходному файлу из папки temporary
+    source_abs_path = os.path.join(BASE_PATH, "documents", "temporary", os.path.basename(relative_task_file))
+
+    if not os.path.exists(source_abs_path):
+        await callback.message.answer("❗️ Файл не найден в папке temporary.")
+        return
+
+    # Получаем путь к папке проекта из order.document_url
     order = await get_order_by_id(order_id)
-    project_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", order["document_url"]))
-    PROJECT_DIR = os.path.dirname(project_file_path)
+    document_url = order.get("document_url")
+    if not document_url:
+        await callback.message.answer("❗️ Не указан document_url у заказа.")
+        return
 
-    os.makedirs(PROJECT_DIR, exist_ok=True)
-    TARGET_PATH = os.path.join(PROJECT_DIR, "calc_files.zip")
+    project_folder_rel = document_url.replace("\\", "/")  # На всякий случай
+    project_abs_path = os.path.join(BASE_PATH, project_folder_rel)
+
+    if not os.path.exists(project_abs_path):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {project_abs_path}")
+        return
+
+    # Целевой путь для файла
+    final_path = os.path.join(project_abs_path, "calc_files.zip")
 
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
+        shutil.move(source_abs_path, final_path)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
         return
 
-    # 💾 Обновляем путь в tasks.document_url
-    new_relative_path = os.path.relpath(TARGET_PATH, os.path.join(PROJECT_DIR, ".."))
-    await update_task_document_path(order_id, "рс", new_relative_path)
+    # 💾 Обновляем путь в БД (tasks.document_url)
+    await update_task_document_url(
+        order_id=order_id,
+        section="рс",
+        document_url=os.path.join("documents", os.path.basename(project_folder_rel), "calc_files.zip")
+    )
 
-    # ✅ Ответы
+    # ✅ Подтверждение
     await callback.message.edit_reply_markup()
     await callback.message.answer("✅ Расчёт принят и файл сохранён в папке проекта как <b>calc_files.zip</b>.")
-    await callback.answer("Принято ✅", show_alert=True)
+    await callback.answer("Файл принят ✅", show_alert=True)
 
 @router.callback_query(F.data.startswith("revise_calc:"))
 async def handle_calc_revision(callback: CallbackQuery, state: FSMContext):
@@ -480,11 +555,10 @@ async def get_genplan_deadline(message: Message, state: FSMContext):
 async def handle_genplan_approval(callback: CallbackQuery):
 
     order_id = int(callback.data.split(":")[1])
+    await callback.message.answer(f"📌 Генплан. Одобряем заказ: {order_id}")
 
-    # Обновляем статус заказа
+    # Обновляем статусы
     await update_order_status(order_id, "waiting_cl")
-
-    # Обновляем статус задачи по генплану
     await update_task_status(order_id=order_id, section="гп", new_status="Сделано")
 
     # Уведомляем генпланиста
@@ -495,33 +569,57 @@ async def handle_genplan_approval(callback: CallbackQuery):
             text=f"✅ Ваш файл по разделу Генплан по заказу #{order_id} принят ГИПом."
         )
 
-    # 🔍 Получаем путь к файлу генплана из tasks.document_url
-    relative_path = await get_genplan_task_document(order_id)
-    if not relative_path:
-        await callback.message.answer("❗️ Не удалось найти файл Генплана в tasks.")
+    # Получаем путь к файлу из tasks.document_url
+    relative_task_file = await get_genplan_task_document(order_id)
+
+    if not relative_task_file:
+        await callback.message.answer("❗️ Не найден файл Генплана (tasks.document_url).")
         return
 
-    # Абсолютный путь к исходному файлу
-    TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents", "temporary"))
-    SOURCE_PATH = os.path.join(TEMP_DIR, os.path.basename(relative_path))
+    # Абсолютный путь до корня проекта
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
 
-    # Папка проекта
+    # Путь к исходному файлу из папки temporary
+    source_abs_path = os.path.join(BASE_PATH, "documents", "temporary", os.path.basename(relative_task_file))
+
+    if not os.path.exists(source_abs_path):
+        await callback.message.answer("❗️ Файл не найден в папке temporary.")
+        return
+
+    # Получаем путь к папке проекта из order.document_url
     order = await get_order_by_id(order_id)
-    project_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", order["document_url"]))
-    PROJECT_DIR = os.path.dirname(project_folder)  # убираем имя файла, оставляем только папку
-    
-    os.makedirs(PROJECT_DIR, exist_ok=True)
-    TARGET_PATH = os.path.join(PROJECT_DIR, "genplan_files.zip")
+    document_url = order.get("document_url")
+    if not document_url:
+        await callback.message.answer("❗️ Не указан document_url у заказа.")
+        return
+
+    project_folder_rel = document_url.replace("\\", "/")  # На всякий случай
+    project_abs_path = os.path.join(BASE_PATH, project_folder_rel)
+
+    if not os.path.exists(project_abs_path):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {project_abs_path}")
+        return
+
+    # Целевой путь сохранения
+    final_path = os.path.join(project_abs_path, "genplan_files.zip")
 
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
+        shutil.move(source_abs_path, final_path)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
         return
 
+    # Убираем клавиатуру и завершаем
     await callback.message.edit_reply_markup()
-    await callback.message.answer("✅ Генплан принят и файл сохранён в папке проекта как <b>genplan_files.zip</b>.")
-    await callback.answer("Принято ✅", show_alert=True)
+        # После успешного перемещения
+    await update_task_document_url(
+        order_id=order_id,
+        section="гп",
+        document_url=os.path.join("documents", os.path.basename(project_folder_rel), "genplan_files.zip")
+    )
+
+    await callback.message.answer("✅ Раздел Генплан принят. Файл сохранён в папке проекта как <b>genplan_files.zip</b>.")
+    await callback.answer("Файл принят ✅", show_alert=True)
 
 # ❌ Замечания по генплану
 @router.callback_query(F.data.startswith("revise_genplan:"))

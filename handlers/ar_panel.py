@@ -7,6 +7,7 @@ import os
 from datetime import datetime, date, timedelta
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import Bot
+import re
 
 class GiveTaskARFSM(StatesGroup):
     waiting_for_comment = State()
@@ -45,7 +46,10 @@ async def show_ar_orders(message: Message):
     for order in orders:
         order_id = order["id"]
         status = order["status"]
-        doc_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
+
+        # Формируем путь к ep.pdf вручную
+        safe_title = re.sub(r'[^\w\-]', '_', order["title"])
+        doc_path = os.path.abspath(os.path.join("documents", safe_title, "ep.pdf"))
 
         buttons = []
 

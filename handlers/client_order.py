@@ -1,12 +1,17 @@
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from database import get_orders_by_customer_telegram, get_order_by_id, get_specialist_by_section, update_order_status, get_order_pending_fix_by_customer
+from database import get_orders_by_customer_telegram, get_order_by_id, get_specialist_by_section, update_order_status, get_order_pending_fix_by_customer, update_task_document_url
 from aiogram.fsm.context import FSMContext
 from states.review_states import ReviewCorrectionFSM
 from dotenv import load_dotenv
 from aiogram.types import FSInputFile
 from tempfile import NamedTemporaryFile
+import re
+import os
+from datetime import datetime
+
 load_dotenv()  # Загружаем переменные окружения
+
 
 router = Router()
 
@@ -60,46 +65,57 @@ async def receive_customer_zip(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
     order = await get_order_by_id(order_id)
+    if not order:
+        await message.answer("❗ Заказ не найден.")
+        return
 
     # Скачиваем файл
     file = await message.bot.get_file(document.file_id)
     downloaded = await message.bot.download_file(file.file_path)
 
-    # Временный файл
-    with NamedTemporaryFile("wb+", delete=False, suffix=".zip") as tmp:
-        tmp.write(downloaded.read())
-        tmp.flush()
+    # Создаём путь к временной папке
+    tmp_dir = os.path.join("documents", "temporary")
+    os.makedirs(tmp_dir, exist_ok=True)
 
-        # Инлайн-кнопки для ГИПа
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Ошибка в документах", callback_data=f"docs_error:{order_id}")],
-            [InlineKeyboardButton(text="✅ Принять документы", callback_data=f"docs_accept:{order_id}")]
-        ])
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_filename = re.sub(r"[^\w\-_.() ]", "_", document.file_name)
+    new_filename = f"submitted_{order_id}_{timestamp}_{safe_filename}"
+    full_path = os.path.join(tmp_dir, new_filename)
 
-        file_to_send = FSInputFile(tmp.name, filename=document.file_name)
+    # Сохраняем файл в `documents/temporary`
+    with open(full_path, "wb") as f:
+        f.write(downloaded.read())
 
-        # Отправляем ГИПу
+    # Обновляем путь к файлу в заказе
+    await update_task_document_url(order_id, "эп", full_path)
+
+    # Кнопки для ГИПа
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Ошибка в документах", callback_data=f"docs_error:{order_id}")],
+        [InlineKeyboardButton(text="✅ Принять документы", callback_data=f"docs_accept:{order_id}")]
+    ])
+
+    # Отправка ГИПу
+    await message.bot.send_document(
+        chat_id=order["gip_id"],
+        document=FSInputFile(full_path, filename=safe_filename),
+        caption=f"📥 Получен ZIP-файл ИРД от заказчика по заказу: <b>{order['title']}</b>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+    # Уведомление специалиста
+    specialist = await get_specialist_by_section("эп")
+    if specialist:
         await message.bot.send_document(
-            chat_id=order["gip_id"],
-            document=file_to_send,
-            caption=f"📥 Получен ZIP-файл ИРД от заказчика по заказу: <b>{order['title']}</b>",
-            reply_markup=keyboard,
+            chat_id=specialist["telegram_id"],
+            document=FSInputFile(full_path, filename=safe_filename),
+            caption=f"Ваш ЭП был утвержден ✅: <b>{order['title']}</b>",
             parse_mode="HTML"
         )
 
-        # Отправляем специалисту
-        specialist = await get_specialist_by_section("эп")
-        if specialist:
-            await message.bot.send_document(
-                chat_id=specialist["telegram_id"],
-                document=file_to_send,
-                caption=f"📥 Получен ZIP-файл ИРД от заказчика по заказу: <b>{order['title']}</b>",
-                parse_mode="HTML"
-            )
-
     await message.answer("✅ Спасибо! ZIP-файл передан исполнителям.")
     await state.clear()
-
 
 @router.message(F.document)
 async def receive_fixed_zip_from_customer(message: Message, state: FSMContext):
