@@ -10,19 +10,21 @@ from database import (
     update_expert_note_file,  # нужно реализовать
     get_task_by_id,
     update_task_status_by_id,
-    mark_order_section_done
+    mark_order_section_done,
+    update_expert_note_url,
+    get_task_id_by_expert_task
 )
 import os
-
+from pathlib import Path
+from aiogram.filters import StateFilter
 router = Router()
 
 EXPERT_FILES_DIR = os.path.join("psdbot", "documents", "expert_notes")
 os.makedirs(EXPERT_FILES_DIR, exist_ok=True)
 
 
-class ExpertNoteFSM(StatesGroup):
-    waiting_for_note_file = State()
-
+class ExpertNoteStates(StatesGroup):
+    awaiting_note_text = State()
 
 @router.message(F.text == "📄 Мои экспертизы")
 async def show_expert_tasks(message: Message):
@@ -39,24 +41,20 @@ async def show_expert_tasks(message: Message):
             f"Описание: {task['order_description']}"
         )
 
-        buttons = []
+        buttons = [
+            InlineKeyboardButton(
+                text="📎 Прикрепить замечания",
+                callback_data=f"send_note:{task['task_id']}"
+            ),
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"approve_note:{task['task_id']}"
+            )
+        ]
 
-        # показать кнопку только если статус — sent_to_experts
-        if task['order_status'] == "sent_to_experts":
-            if task['expert_note_url']:  # замечание прикреплено
-                buttons.append(InlineKeyboardButton(
-                    text="✅ Одобрить",
-                    callback_data=f"approve_note:{task['task_id']}"
-                ))
-            else:
-                buttons.append(InlineKeyboardButton(
-                    text="📎 Прикрепить замечания",
-                    callback_data=f"send_note:{task['task_id']}"
-                ))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
-
-        doc_path = f"psdbot/documents/{task['document_url']}"
+        doc_path = task["document_url"]
         try:
             await message.answer_document(
                 document=FSInputFile(doc_path),
@@ -68,38 +66,114 @@ async def show_expert_tasks(message: Message):
             await message.answer(f"⚠️ Файл не найден по пути: {doc_path}")
 
 @router.callback_query(F.data.startswith("send_note:"))
-async def start_send_note(callback: CallbackQuery, state: FSMContext):
+async def handle_send_note(callback: CallbackQuery, state: FSMContext):
     task_id = int(callback.data.split(":")[1])
-    await state.set_state(ExpertNoteFSM.waiting_for_note_file)
+
     await state.update_data(task_id=task_id)
-    await callback.message.answer("📎 Пришлите ZIP файл с замечаниями по разделу.")
-    await callback.answer()
-
-
-@router.message(ExpertNoteFSM.waiting_for_note_file, F.document)
-async def receive_note_file(message: Message, state: FSMContext):
-    document: Document = message.document
-
-    if not document.file_name.lower().endswith(".zip"):
-        await message.answer("❗️Пожалуйста, отправьте файл в формате ZIP.")
-        return
+    await callback.message.answer(
+        "📝 Пожалуйста, введите текст замечаний к заказу:"
+    )
+    await state.set_state(ExpertNoteStates.awaiting_note_text)
+    await callback.answer()  # Убираем "часики"
+     
+@router.message(StateFilter(ExpertNoteStates.awaiting_note_text))
+async def receive_note_text(message: Message, state: FSMContext):
+    print("🟡 Получено сообщение от эксперта.")
 
     data = await state.get_data()
-    task_id = data["task_id"]
+    task_id = data.get("task_id")
+    print(f"🔧 task_id из state: {task_id}")
 
-    filename = f"note_{task_id}_{document.file_name}"
-    save_path = os.path.join(EXPERT_FILES_DIR, filename)
+    note_text = message.text
 
-    file = await message.bot.get_file(document.file_id)
-    await message.bot.download_file(file.file_path, destination=save_path)
+    file_path = await save_expert_note(task_id, note_text)
 
-    relative_path = os.path.relpath(save_path, "psdbot")
+    if file_path is None:
+        print("❌ save_expert_note вернул None.")
+        await message.answer("⚠️ Не удалось найти заказ. Возможно, он был удалён.")
+        await state.clear()
+        return
 
-    # 🔄 Сохраняем в БД
-    await update_expert_note_file(task_id, relative_path)
+    print(f"📁 Замечания сохранены по пути: {file_path}")
 
-    await message.answer("✅ Замечания успешно прикреплены.")
+    await update_expert_note_url(task_id, str(file_path))
+    print("✅ Ссылка на файл замечаний сохранена в БД.")
+
+    await message.answer("✅ Замечания успешно сохранены.")
     await state.clear()
+
+    # Отправка замечаний ГИПу и специалисту
+    task = await get_task_id_by_expert_task(task_id)
+    if not task:
+        print("❌ Task не найден в get_task_id_by_expert_task")
+        return
+
+    section_user_id = task.get("section_user_id")
+    gip_user_id = task.get("gip_user_id")
+    section = task.get("section", "").upper()
+    order_title = task.get("order_title", "Без названия")
+
+    print(f"📦 Отправляем файл по заказу: {order_title}, раздел: {section}")
+    print(f"👤 Специалист ID: {section_user_id}, ГИП ID: {gip_user_id}")
+
+    expert_username = message.from_user.username
+    expert_id = message.from_user.id
+
+    expert_display = (
+        f"@{expert_username}" if expert_username
+        else f'<a href="tg://user?id={expert_id}">{message.from_user.full_name}</a>'
+    )
+
+    caption = (
+        f"📌 Замечания по заказу <b>{order_title}</b>\n"
+        f"Раздел: <b>{section}</b>\n"
+        f"👷 Эксперт: {expert_display}"
+    )
+
+    reply_button = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✉ Ответить эксперту", url=f"tg://user?id={expert_id}")]
+    ])
+
+    try:
+        doc = FSInputFile(file_path)
+    except Exception as e:
+        print(f"❌ Ошибка при открытии файла: {e}")
+        return
+
+    for user_id in [section_user_id, gip_user_id]:
+        if user_id:
+            try:
+                print(f"📤 Отправляем файл пользователю {user_id}")
+                await message.bot.send_document(
+                    chat_id=user_id,
+                    document=doc,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=reply_button
+                )
+                print(f"✅ Успешно отправлено пользователю {user_id}")
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить замечания пользователю {user_id}: {e}")
+
+
+async def save_expert_note(task_id: int, text: str) -> Path | None:
+    task = await get_task_id_by_expert_task(task_id)
+    
+    if task is None:
+        print(f"❌ Task with ID {task_id} not found!")
+        return None
+
+    doc_path = Path(task["document_url"])
+    section = task["section"].upper()
+
+    project_dir = doc_path.parent
+    notes_dir = project_dir / "expert_notes"
+    notes_dir.mkdir(exist_ok=True)
+
+    note_file_path = notes_dir / f"{section}.txt"
+    note_file_path.write_text(text, encoding="utf-8")
+
+    return note_file_path
 
 @router.callback_query(F.data.startswith("approve_note:"))
 async def handle_approve_note(callback: CallbackQuery):

@@ -879,22 +879,33 @@ async def register_expert(full_name: str, telegram_id: int, section: str):
             ON CONFLICT (telegram_id) DO NOTHING
         """, full_name, telegram_id, section)
 
-async def get_expert_tasks(expert_telegram_id: int):
+async def get_expert_tasks(telegram_id: int):
     async with pool.acquire() as conn:
+        expert_row = await conn.fetchrow(
+            "SELECT id FROM experts WHERE telegram_id = $1", telegram_id
+        )
+        if not expert_row:
+            return []
+
+        expert_id = expert_row["id"]
+
         rows = await conn.fetch("""
             SELECT
-                t.id AS task_id,
-                o.title AS order_title,
-                o.description AS order_description,
+                et.id AS task_id,
+                et.status AS order_status,
                 t.section,
-                t.document_url
-            FROM tasks t
-            JOIN users u ON LOWER(t.section) = LOWER(u.section)
+                t.description AS order_description,
+                t.document_url,
+                t.expert_note_url,
+                o.title AS order_title
+            FROM expert_tasks et
+            JOIN tasks t ON t.id = et.task_id
             JOIN orders o ON o.id = t.order_id
-            WHERE u.telegram_id = $1
-              AND t.document_url IS NOT NULL
-        """, expert_telegram_id)
-        return [dict(r) for r in rows]
+            WHERE et.expert_id = $1
+        """, expert_id)
+
+        return [dict(row) for row in rows]
+
 
 async def is_expert_registered(telegram_id: int) -> bool:
     async with pool.acquire() as conn:
@@ -1298,3 +1309,115 @@ async def get_task_id_by_order_and_section(order_id: int, section: str) -> int |
             WHERE order_id = $1 AND section = $2
         """, order_id, section)
         return row["id"] if row else None
+
+
+async def update_all_sections_status(order_id: int, new_status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE tasks
+            SET status = $1
+            WHERE order_id = $2
+        """, new_status, order_id)
+
+
+async def get_all_experts_i():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, telegram_id, section
+            FROM experts
+            WHERE archived = false
+        """)
+        return [dict(r) for r in rows]
+
+
+async def assign_task_to_expert(task_id: int, expert_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO expert_tasks (task_id, expert_id)
+            VALUES ($1, $2)
+        """, task_id, expert_id)
+
+
+async def update_expert_task_status(expert_task_id: int, new_status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE expert_tasks
+            SET status = $1
+            WHERE id = $2
+        """, new_status, expert_task_id)
+
+
+async def create_or_get_task(order_id: int, section: str, document_url: str) -> int:
+    async with pool.acquire() as conn:
+        # Проверка — существует ли уже задача
+        row = await conn.fetchrow("""
+            SELECT id FROM tasks
+            WHERE order_id = $1 AND section = $2
+        """, order_id, section)
+        if row:
+            return row["id"]
+
+        # Иначе создаём новую
+        row = await conn.fetchrow("""
+            INSERT INTO tasks (order_id, section, document_url, status)
+            VALUES ($1, $2, $3, 'Передано экспертам')
+            RETURNING id
+        """, order_id, section, document_url)
+        return row["id"]
+
+
+async def assign_task_to_expert(task_id: int, expert_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO expert_tasks (task_id, expert_id, status)
+            VALUES ($1, $2, 'в работе')
+            ON CONFLICT (task_id, expert_id) DO NOTHING
+        """, task_id, expert_id)
+
+
+async def get_task_by_id(task_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT
+                et.id AS task_id,
+                o.title AS order_title,
+                o.description AS order_description,
+                et.section,
+                et.document_url,
+                et.expert_note_url,
+                et.status AS order_status,
+                et.expert_id,
+                et.order_id
+            FROM expert_tasks et
+            JOIN orders o ON o.id = et.order_id
+            WHERE et.id = $1
+        """, task_id)
+        return dict(row) if row else None
+
+
+async def update_expert_note_url(task_id: int, file_path: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE expert_tasks
+            SET expert_note_url = $1
+            WHERE task_id = $2
+        """, file_path, task_id)
+
+
+async def get_task_id_by_expert_task(expert_task_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT t.id AS task_id, t.section, t.document_url
+            FROM expert_tasks et
+            JOIN tasks t ON et.task_id = t.id
+            WHERE et.id = $1
+        """, expert_task_id)
+        return dict(row) if row else None
+
+async def update_expert_note_url(expert_task_id: int, url: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE expert_tasks
+            SET expert_note_url = $1
+            WHERE id = $2
+        """, url, expert_task_id)

@@ -124,6 +124,8 @@ async def handle_send_project_zip(callback: CallbackQuery):
     order = await get_order_by_id(order_id)
     order_title = order["title"]
     
+    await callback.answer("⏳ Формируем архив... Пожалуйста, подождите.")
+
     # Название папки — с подчёркиваниями вместо пробелов
     folder_name = order_title.replace(" ", "_")
     project_dir = os.path.join(BASE_DOC_PATH, folder_name)

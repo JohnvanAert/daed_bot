@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status, save_kj_file_path_to_tasks, get_ovik_task_document, get_eom_task_document, get_ss_task_document, get_kj_task_document, get_vk_task_document, get_task_document_by_section, get_all_experts, update_task_document_url
+from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status, save_kj_file_path_to_tasks, get_ovik_task_document, get_eom_task_document, get_ss_task_document, get_kj_task_document, get_vk_task_document, get_task_document_by_section, get_all_experts, update_task_document_url, get_gs_task_document, update_all_sections_status, get_all_experts_i, create_or_get_task, assign_task_to_expert
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import FSInputFile
 import os
@@ -738,12 +738,10 @@ async def receive_ovik_description(message: Message, state: FSMContext):
 async def handle_gip_ovik_approval(callback: CallbackQuery):
 
     order_id = int(callback.data.split(":")[1])
-    await callback.message.answer(f"📌 Одобряем ОВиК по заказу: {order_id}")
     await update_order_status(order_id, "approved_ovik")
 
     order = await get_order_by_id(order_id)
     document_url = order.get("document_url")
-    await callback.message.answer(f"📝 document_url из orders: {document_url}")
 
     if not document_url:
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
@@ -751,11 +749,9 @@ async def handle_gip_ovik_approval(callback: CallbackQuery):
 
     # Путь до корня проекта (до psdbot)
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
-    await callback.message.answer(f"📂 BASE_PATH: {BASE_PATH}")
 
     # Путь к папке проекта (на основе document_url)
     PROJECT_DIR = os.path.join(BASE_PATH, document_url)
-    await callback.message.answer(f"📁 Папка проекта: {PROJECT_DIR}")
 
     if not os.path.exists(PROJECT_DIR):
         await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_DIR}")
@@ -763,7 +759,6 @@ async def handle_gip_ovik_approval(callback: CallbackQuery):
 
     # Путь к файлу ОВиК из tasks
     relative_file_path = await get_ovik_task_document(order_id)
-    await callback.message.answer(f"📎 document_url из tasks: {relative_file_path}")
     project_folder_rel = document_url  # уже нужная папка
     if not relative_file_path:
         await callback.message.answer("❗️ Не найден файл ОВиК в tasks.")
@@ -771,7 +766,6 @@ async def handle_gip_ovik_approval(callback: CallbackQuery):
 
     # Абсолютный путь к исходному файлу ОВиК
     SOURCE_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
-    await callback.message.answer(f"📄 Абсолютный путь к исходному файлу: {SOURCE_PATH}")
 
     if not os.path.exists(SOURCE_PATH):
         await callback.message.answer(f"❗️ ОВиК-файл не найден: {SOURCE_PATH}")
@@ -779,7 +773,6 @@ async def handle_gip_ovik_approval(callback: CallbackQuery):
 
     # Путь назначения
     TARGET_PATH = os.path.join(PROJECT_DIR, "ovik_files.zip")
-    await callback.message.answer(f"📥 Перемещаем файл в: {TARGET_PATH}")
 
     try:
         shutil.move(SOURCE_PATH, TARGET_PATH)
@@ -974,25 +967,35 @@ async def handle_gip_gs_approval(callback: CallbackQuery):
 
     # Путь до корня проекта
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
+    await callback.message.answer(f"📂 BASE_PATH: {BASE_PATH}")
 
-    # Папка проекта (относительно document_url)
-    PROJECT_DIR = os.path.join(BASE_PATH, document_url)
+    # Путь к папке проекта
+    project_folder_rel = document_url  # уже нужная папка
+    PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
 
-    if not os.path.exists(PROJECT_DIR):
-        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_DIR}")
+    if not os.path.exists(PROJECT_ABS_PATH):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_ABS_PATH}")
+        return
+
+    # Получаем относительный путь к файлу КЖ из tasks
+    relative_file_path = await get_gs_task_document(order_id)
+
+    if not relative_file_path:
+        await callback.message.answer(f"❗️ Не найден путь к КЖ-файлу (tasks.document_url).")
         return
 
     # Файл gs_files.zip должен быть в temporary
-    SOURCE_PATH = os.path.join(BASE_PATH, "documents", "temporary", "gs_files.zip")
-    TARGET_PATH = os.path.join(PROJECT_DIR, "gs_files.zip")
+    SOURCE_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+
     project_folder_rel = document_url 
     if not os.path.exists(SOURCE_PATH):
         await callback.message.answer(f"❗️ Файл ГС не найден: {SOURCE_PATH}")
         return
 
+    FINAL_PATH = os.path.join(PROJECT_ABS_PATH, "gs_files.zip")
+
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
-        await callback.message.answer("✅ Файл успешно перемещён.")
+        shutil.move(SOURCE_PATH, FINAL_PATH)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
         return
@@ -1107,26 +1110,38 @@ async def handle_gip_vk_approval(callback: CallbackQuery):
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
         return
 
-    # Базовый путь до проекта
+    # Путь до корня проекта (до psdbot)
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
+    await callback.message.answer(f"📂 BASE_PATH: {BASE_PATH}")
 
-    # Абсолютный путь до папки проекта
-    PROJECT_PATH = os.path.join(BASE_PATH, document_url)
+    # Путь к папке проекта
+    project_folder_rel = document_url  # уже нужная папка
+    PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
+    await callback.message.answer(f"📁 Папка проекта: {PROJECT_ABS_PATH}")
 
-    if not os.path.exists(PROJECT_PATH):
-        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_PATH}")
+    if not os.path.exists(PROJECT_ABS_PATH):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_ABS_PATH}")
         return
 
-    # Путь к исходному файлу (из temporary)
-    SOURCE_PATH = os.path.join(BASE_PATH, "documents", "temporary", "vk_files.zip")
-    TARGET_PATH = os.path.join(PROJECT_PATH, "vk_files.zip")
-    project_folder_rel = document_url
-    if not os.path.exists(SOURCE_PATH):
-        await callback.message.answer(f"❗️ Файл ВК не найден: {SOURCE_PATH}")
+    # Получаем относительный путь к файлу ВК из tasks
+    relative_file_path = await get_vk_task_document(order_id)
+
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден путь к ВК-файлу (tasks.document_url).")
         return
+
+    # Абсолютный путь к исходному ВК-файлу
+    SOURCE_ABS_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    
+    if not os.path.exists(SOURCE_ABS_PATH):
+        await callback.message.answer(f"❗️ ВК-файл не найден: {SOURCE_ABS_PATH}")
+        return
+
+    # Целевой путь в проектной папке
+    FINAL_PATH = os.path.join(PROJECT_ABS_PATH, "vk_files.zip")
 
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
+        shutil.move(SOURCE_ABS_PATH, FINAL_PATH)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
         return
@@ -1137,7 +1152,7 @@ async def handle_gip_vk_approval(callback: CallbackQuery):
     await update_task_document_url(
         order_id=order_id,
         section="вк",
-        document_url=os.path.join("documents", os.path.basename(project_folder_rel), "ss_files.zip")
+        document_url=os.path.join("documents", os.path.basename(project_folder_rel), "vk_files.zip")
     )
     await callback.message.answer("✅ Раздел ВК принят. Файл сохранён как vk_files.zip.")
     await callback.answer("Файл принят ✅", show_alert=True)
@@ -1278,7 +1293,6 @@ async def handle_gip_eom_approval(callback: CallbackQuery):
 
     order = await get_order_by_id(order_id)
     document_url = order.get("document_url")
-    await callback.message.answer(f"📝 document_url из orders: {document_url}")
 
     if not document_url:
         await callback.message.answer("❗️ У заказа не указан путь document_url.")
@@ -1286,24 +1300,35 @@ async def handle_gip_eom_approval(callback: CallbackQuery):
 
     # Абсолютный путь до проекта
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
-    PROJECT_PATH = os.path.join(BASE_PATH, document_url)
+    await callback.message.answer(f"📂 BASE_PATH: {BASE_PATH}")
 
-    if not os.path.exists(PROJECT_PATH):
-        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_PATH}")
+    # Путь к папке проекта
+    project_folder_rel = document_url  # уже нужная папка
+    PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
+    await callback.message.answer(f"📁 Папка проекта: {PROJECT_ABS_PATH}")
+
+    if not os.path.exists(PROJECT_ABS_PATH):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_ABS_PATH}")
         return
 
-    # Путь к файлу ЭОМ из temporary
-    SOURCE_PATH = os.path.join(BASE_PATH, "documents", "temporary", "eom_files.zip")
-    TARGET_PATH = os.path.join(PROJECT_PATH, "eom_files.zip")
+    # Получаем относительный путь к файлу КЖ из tasks
+    relative_file_path = await get_eom_task_document(order_id)
 
-    project_folder_rel = document_url
-    if not os.path.exists(SOURCE_PATH):
-        await callback.message.answer(f"❗️ Файл ЭОМ не найден: {SOURCE_PATH}")
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден путь к ЭОМ-файлу (tasks.document_url).")
         return
 
+    # Абсолютный путь к исходному КЖ-файлу
+    SOURCE_ABS_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    
+    if not os.path.exists(SOURCE_ABS_PATH):
+        await callback.message.answer(f"❗️ ЭОМ-файл не найден: {SOURCE_ABS_PATH}")
+        return
+
+    # Целевой путь в проектной папке
+    FINAL_PATH = os.path.join(PROJECT_ABS_PATH, "eom_files.zip")
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
-        await callback.message.answer("✅ Файл успешно перемещён.")
+        shutil.move(SOURCE_ABS_PATH, FINAL_PATH)
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
         return
@@ -1466,23 +1491,34 @@ async def handle_gip_ss_approval(callback: CallbackQuery):
 
     # Абсолютный путь до проекта
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
-    PROJECT_PATH = os.path.join(BASE_PATH, document_url)
 
-    if not os.path.exists(PROJECT_PATH):
-        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_PATH}")
+    # Путь к папке проекта
+    project_folder_rel = document_url  # уже нужная папка
+    PROJECT_ABS_PATH = os.path.join(BASE_PATH, project_folder_rel)
+    await callback.message.answer(f"📁 Папка проекта: {PROJECT_ABS_PATH}")
+    if not os.path.exists(PROJECT_ABS_PATH):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {PROJECT_ABS_PATH}")
         return
 
-    # Путь к файлу СС из temporary
-    SOURCE_PATH = os.path.join(BASE_PATH, "documents", "temporary", "ss_files.zip")
-    TARGET_PATH = os.path.join(PROJECT_PATH, "ss_files.zip")
+    # Получаем относительный путь к файлу КЖ из tasks
+    relative_file_path = await get_ss_task_document(order_id)
 
-    project_folder_rel = document_url
-    if not os.path.exists(SOURCE_PATH):
-        await callback.message.answer(f"❗️ Файл СС не найден: {SOURCE_PATH}")
+    if not relative_file_path:
+        await callback.message.answer("❗️ Не найден путь к СС-файлу (tasks.document_url).")
         return
+
+    # Абсолютный путь к исходному КЖ-файлу
+    SOURCE_ABS_PATH = os.path.join(BASE_PATH, "documents", relative_file_path)
+    
+    if not os.path.exists(SOURCE_ABS_PATH):
+        await callback.message.answer(f"❗️ СС-файл не найден: {SOURCE_ABS_PATH}")
+        return
+    
+     # Целевой путь в проектной папке
+    FINAL_PATH = os.path.join(PROJECT_ABS_PATH, "ss_files.zip")
 
     try:
-        shutil.move(SOURCE_PATH, TARGET_PATH)
+        shutil.move(SOURCE_ABS_PATH, FINAL_PATH)
         await callback.message.answer("✅ Файл успешно перемещён.")
     except Exception as e:
         await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
@@ -1536,41 +1572,82 @@ async def send_ss_correction_comment(message: Message, state: FSMContext):
     await message.answer("✅ Комментарий передан специалисту.")
     await state.clear()
 
+def get_section_selection_kb(order_id: int):
+    sections = ["ар", "кж", "овик", "вк", "эо","гс","сс"]  # исключаем "эп"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=section.upper(), callback_data=f"send_section:{order_id}:{section}")]
+        for section in sections
+    ])
+    return kb
 
 @router.callback_query(F.data.startswith("send_to_expert:"))
-async def handle_send_to_experts(callback: CallbackQuery, bot: Bot):
-
+async def handle_select_section(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
+    kb = get_section_selection_kb(order_id)
+    await callback.message.answer("🔍 Выберите раздел, который нужно передать экспертам:", reply_markup=kb)
+    await callback.answer()
+    
+@router.callback_query(F.data.startswith("send_section:"))
+async def handle_send_selected_section(callback: CallbackQuery, bot: Bot):
+    _, order_id_str, section = callback.data.split(":")
+    order_id = int(order_id_str)
+    section = section.lower()
+
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
+    project = await get_order_by_id(order_id)
+    document_url = project.get("document_url")
+    order_title = project.get("title")
+    if not document_url:
+        await callback.message.answer("❗️ У заказа не указан путь document_url.")
+        return
 
-    # 1. Получить список всех экспертов (с ролями и разделами)
-    experts = await get_all_experts()  # Например: [{'telegram_id': ..., 'section': 'ар'}, ...]
+    project_path = os.path.join(BASE_PATH, document_url)
+    if not os.path.exists(project_path):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {project_path}")
+        return
 
-    # 2. Перебираем по разделам
-    for expert in experts:
-        section = expert["section"].lower()
-        tg_id = expert["telegram_id"]
+    # Получаем эксперта по разделу
+    experts = await get_all_experts_i()
+    expert = next((e for e in experts if e["section"].lower() == section), None)
 
-        # 3. Получаем путь к файлу конкретного раздела
-        task_doc = await get_task_document_by_section(order_id, section)
-        if not task_doc:
-            continue  # если у раздела нет файла — пропускаем
+    if not expert:
+        await callback.message.answer(f"❗️ Не найден эксперт по разделу {section.upper()}")
+        return
 
-        abs_path = os.path.join(BASE_PATH, "documents", task_doc)
-        if not os.path.exists(abs_path):
-            continue  # если файла нет физически
+    tg_id = expert["telegram_id"]
+    
+    # Список файлов по разделам
+    section_files_map = {
+        "ар": ["ar_files.zip", "genplan_files.zip"],
+        "кж": ["kj_files.zip", "calc_files.zip"],
+        "овик": ["ov_files.zip"],
+        "вк": ["vk_files.zip"],
+        "эо": ["eo_files.zip"],
+        "генплан": ["genplan_files.zip"]
+    }
 
-        # 4. Отправляем файл эксперту
+    files_to_send = section_files_map.get(section, [])
+    sent_any = False
+
+    for filename in files_to_send:
+        full_path = os.path.join(project_path, filename)
+        if not os.path.exists(full_path):
+            print(f"⚠️ Файл не найден: {full_path}")
+            continue
         try:
-            await callback.message.bot.send_document(
+            await bot.send_document(
                 chat_id=tg_id,
-                document=FSInputFile(abs_path),
-                caption=f"📩 Заказ #{order_id} — раздел {section.upper()}.\nПросьба ознакомиться и при необходимости написать замечания."
+                document=FSInputFile(full_path),
+                caption=f"📩 Заказ #{order_id} — файл {filename}"
             )
-
+            sent_any = True
         except Exception as e:
-            print(f"Ошибка при отправке {section} эксперту {tg_id}: {e}")
-    await update_order_status(order_id, "sent_to_experts")
-    await update_task_status(order_id, "Передано экспертам")
-    await callback.message.answer("✅ Все разделы отправлены экспертам.")
-    await callback.answer("Отправлено экспертам ✅", show_alert=True)
+            print(f"❌ Ошибка при отправке файла {filename}: {e}")
+
+    if sent_any:
+        await callback.message.answer(f"✅ Раздел {section.upper()} отправлен эксперту.")
+        await callback.answer("Отправлено ✅", show_alert=True)
+        task_id = await create_or_get_task(order_id, section, document_url)
+        await assign_task_to_expert(task_id, expert["id"])
+    else:
+        await callback.message.answer("❗️Этот раздел еще не сделан.")
