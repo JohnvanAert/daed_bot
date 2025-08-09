@@ -75,6 +75,10 @@ async def send_orders_to(recipient, send_method):
                 InlineKeyboardButton(text="📤 Передать расчётчику", callback_data=f"assign_calculator:{order['id']}"),
                 InlineKeyboardButton(text="📤 Передать генпланисту", callback_data=f"assign_genplan:{order['id']}")
             ]]
+        elif order["status"] == "approved_estimates":
+            keyboard_buttons = [[
+                InlineKeyboardButton(text="🏁 Завершить ПД", callback_data=f"finish_pd:{order['id']}")
+            ]]
         elif order["status"] in ALLOWED_STATUSES:
             keyboard_buttons = []
 
@@ -683,7 +687,7 @@ async def handle_approve_estimate(callback: CallbackQuery):
     await callback.message.answer(f"📌 Смета. Одобряем заказ: {order_id}")
 
     # Обновляем статусы
-    await update_order_status(order_id, "waiting_estimates")
+    await update_order_status(order_id, "completed")
     await update_task_status(order_id=order_id, section="смета", new_status="Смета сделана")
 
     # Получаем путь к файлу сметы из tasks.document_url
