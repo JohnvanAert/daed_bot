@@ -28,3 +28,8 @@ class RegisterCustomer(StatesGroup):
     waiting_for_iin_or_bin = State()
     waiting_for_phone = State()
     waiting_for_email = State()
+
+
+class AssignSmetchikFSM(StatesGroup):
+    waiting_for_deadline = State()
+    waiting_for_description = State()

@@ -151,7 +151,7 @@ async def set_role(callback: CallbackQuery, state: FSMContext):
 # 🔥 Изменяем секцию через кнопки
 @router.callback_query(F.data == "edit_section")
 async def choose_section(callback: CallbackQuery, state: FSMContext):
-    sections = ["эп", "ар", "кж", "гп", "рс", "сс", "овик", "гс", "вк", "эом"]
+    sections = ["эп", "ар", "кж", "гп", "рс", "сс", "овик", "гс", "вк", "эом", "смета"]
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=sec.upper(), callback_data=f"set_section:{sec}")] for sec in sections
     ])

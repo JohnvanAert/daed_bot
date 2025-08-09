@@ -1,9 +1,11 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram import Router, types
+from database import get_user_by_tg_id
+router = Router()
 
-
-def send_main_menu(message, role: str, section: str = None, is_archived=False):
+async def send_main_menu(message, role: str, section: str = None, is_archived=False):
     if is_archived:
-        return message.answer(
+        return await message.answer(
             "⚠️ Ваша учетная запись в архиве. Обратитесь к администратору для восстановления.",
             reply_markup=ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[[KeyboardButton(text="👤 Мой профиль")]])
         )
@@ -58,12 +60,12 @@ def send_main_menu(message, role: str, section: str = None, is_archived=False):
             [KeyboardButton(text=" Нанять исполнителя по сс")],
             profile_button
         ],
-        "сметчик": [
+        "смета": [
             [KeyboardButton(text="📄 Мои задачи по смете")],
             profile_button
         ]
     }
-
+    
     # 🧠 Сначала проверяем конкретные роли
     if role == "гип":
         kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -91,6 +93,33 @@ def send_main_menu(message, role: str, section: str = None, is_archived=False):
             profile_button
         ])
     else:
-        return message.answer("⚠️ Ваша роль не распознана. Обратитесь к администратору.")
+        return await message.answer("⚠️ Ваша роль не распознана. Обратитесь к администратору.")
 
-    return message.answer(f"Добро пожаловать в панель {role.capitalize()}!", reply_markup=kb)
+    return await message.answer(f"Добро пожаловать в панель {role.capitalize()}!", reply_markup=kb)
+
+
+@router.message(lambda message: message.text == "📦 Заказы")
+async def handle_orders_menu(message: types.Message):
+    kb = ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        keyboard=[
+            [KeyboardButton(text="📦 Текущие заказы")],
+            [KeyboardButton(text="📁 Завершённые заказы")],
+            [KeyboardButton(text="🔙 Назад в меню")]
+        ]
+    )
+    await message.answer("Выберите тип заказов:", reply_markup=kb)
+
+
+@router.message(lambda message: message.text == "🔙 Назад в меню")
+async def handle_back_to_main(message: types.Message):
+    user = await get_user_by_tg_id(message.from_user.id)
+    if not user:
+        return await message.answer("Пользователь не найден.")
+    
+    await send_main_menu(
+        message,
+        role=user["role"],
+        section=user.get("section"),
+        is_archived=user.get("is_archived", False)
+    )

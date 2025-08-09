@@ -1,6 +1,6 @@
-from aiogram import Router, F
+from aiogram import Router, F, types
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url, get_completed_orders, get_sections_by_order_id, get_estimate_task_document
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -19,6 +19,7 @@ from states.task_states import AssignGenplanFSM
 from datetime import datetime, timedelta
 from states.task_states import ReviewGenplanCorrectionFSM
 from states.task_states import AssignARFSM
+from states.states import AssignSmetchikFSM
 import zipfile
 import shutil
 import re
@@ -32,6 +33,15 @@ ALLOWED_STATUSES = {
 }
 BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 # Initialize the client bot with the token from environment variables
+
+section_files_map = {
+    "ар": ["ar_files.zip", "genplan_files.zip"],
+    "кж": ["kj_files.zip", "calc_files.zip"],
+    "овик": ["ovik_files.zip"],
+    "вк": ["vk_files.zip"],
+    "эо": ["eom_files.zip"],
+    "сс": ["ss_files"]
+}
 
 async def send_orders_to(recipient, send_method):
     orders = await get_all_orders()
@@ -94,14 +104,18 @@ async def send_orders_to(recipient, send_method):
                 ])
 
             keyboard_buttons.append([
-                InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}")
+                InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}"),
+                
             ])
-
-            # Добавляем кнопку сметчику, если ВСЕ задачи по разделам выполнены
-            if await are_all_sections_done(order["id"]):
-                keyboard_buttons.append([
+            keyboard_buttons.append([
                     InlineKeyboardButton(text="📤 Передать Сметчику", callback_data=f"assign_sm:{order['id']}")
                 ])
+
+            # Добавляем кнопку сметчику, если ВСЕ задачи по разделам выполнены
+            # if await are_all_sections_done(order["id"]):
+            #     keyboard_buttons.append([
+            #         InlineKeyboardButton(text="📤 Передать Сметчику", callback_data=f"assign_sm:{order['id']}")
+            #     ])
 
             
         else:
@@ -283,7 +297,7 @@ async def process_edit_comment(message: Message, state: FSMContext):
     await message.answer("Комментарий отправлен заказчику ✉️")
     await state.clear()
 
-@router.message(F.text == "📦 Заказы")
+@router.message(F.text == "📦 Текущие заказы")
 async def show_orders_message(message: Message):
     await send_orders_to(message, message.answer)
 
@@ -666,38 +680,200 @@ async def handle_genplan_correction_comment(message: Message, state: FSMContext)
 @router.callback_query(F.data.startswith("approve_estimate:"))
 async def handle_approve_estimate(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
+    await callback.message.answer(f"📌 Смета. Одобряем заказ: {order_id}")
+
+    # Обновляем статусы
+    await update_order_status(order_id, "waiting_estimates")
+    await update_task_status(order_id=order_id, section="смета", new_status="Смета сделана")
+
+    # Получаем путь к файлу сметы из tasks.document_url
+    relative_task_file = await get_estimate_task_document(order_id)
+
+    if not relative_task_file:
+        await callback.message.answer("❗️ Не найден файл сметы (tasks.document_url).")
+        return
+
+    # Абсолютный путь до корня проекта
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot"))
+
+    # Путь к исходному файлу из папки temporary
+    source_abs_path = os.path.join(BASE_PATH, "documents", "temporary", os.path.basename(relative_task_file))
+
+    if not os.path.exists(source_abs_path):
+        await callback.message.answer(f"❗️ Файл сметы не найден в папке temporary: {source_abs_path}")
+        return
+
+    # Получаем путь к папке проекта из order.document_url
     order = await get_order_by_id(order_id)
-    customer_id = await get_customer_telegram_id(order["customer_id"])
+    document_url = order.get("document_url")
+    if not document_url:
+        await callback.message.answer("❗️ Не указан document_url у заказа.")
+        return
 
-    # сохраняем смету в папку проекта
-    project_folder = os.path.join("documents", re.sub(r'[^\w\-]', '_', order["title"]))
-    os.makedirs(project_folder, exist_ok=True)
-    estimate_file_path = os.path.join(project_folder, "estimate_files.zip")
+    project_folder_rel = document_url.replace("\\", "/")
+    project_abs_path = os.path.join(BASE_PATH, project_folder_rel)
 
-    # тут подразумевается что до этого уже был файл с расчетами, и мы его копируем/переносим
-    # например если файл был в temp, его можно переместить
-    shutil.copy("temp/estimate_ready.zip", estimate_file_path)  # или куда ты его сохраняешь
+    if not os.path.exists(project_abs_path):
+        await callback.message.answer(f"❗️ Папка проекта не найдена: {project_abs_path}")
+        return
 
-    # собираем финальный ZIP со всеми файлами проекта
-    final_zip_path = os.path.join(project_folder, "final_project.zip")
-    with zipfile.ZipFile(final_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, _, files in os.walk(project_folder):
-            for file in files:
-                if file != "final_project.zip":  # чтобы не включать себя самого
-                    abs_file_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(abs_file_path, project_folder)
-                    zipf.write(abs_file_path, arcname=rel_path)
+    # Целевой путь сохранения
+    estimate_file_path = os.path.join(project_abs_path, "estimate_files.zip")
 
-    # отправляем заказчику
-    await callback.bot.send_message(
-        customer_id,
-        f"✅ Ваш проект <b>{order['title']}</b> полностью завершён!\n📦 Прилагаем финальный архив.",
-        parse_mode="HTML"
-    )
-    await callback.bot.send_document(
-        customer_id,
-        FSInputFile(final_zip_path)
+    try:
+        shutil.move(source_abs_path, estimate_file_path)
+    except Exception as e:
+        await callback.message.answer(f"❗️ Ошибка при перемещении файла: {e}")
+        return
+
+    # После перемещения обновляем ссылку в БД
+    await update_task_document_url(
+        order_id=order_id,
+        section="смета",
+        document_url=os.path.join("documents", os.path.basename(project_folder_rel), "estimate_files.zip")
     )
 
-    await callback.message.answer("✅ Смета утверждена, финальный архив отправлен заказчику.")
-    await callback.answer("Готово ✅", show_alert=True)
+    # Завершаем
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("✅ Смета принята. Файл сохранён в папке проекта как <b>estimate_files.zip</b>.")
+    await callback.answer("Файл сметы принят ✅", show_alert=True)
+
+@router.message(lambda m: m.text and m.text.strip() == "📁 Завершённые заказы")
+async def handle_completed_orders(message: types.Message):
+    await send_completed_orders_to(message, message.answer)
+
+
+async def send_completed_orders_to(recipient, send_method):
+    orders = await get_completed_orders()
+
+    if not orders:
+        await send_method("📭 Нет завершённых заказов.")
+        return
+    
+    for order in orders:
+        text = (
+            f"📌 <b>{order['title']}</b>\n"
+            f"📝 {order['description']}\n"
+            f"👤 Заказчик ID: {order['customer_id']}\n"
+            f"📅 Создан: {order['created_at'].strftime('%Y-%m-%d %H:%M')}\n"
+            f"✅ Завершено"
+        )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Скачать весь проект", callback_data=f"send_project_zip:{order['id']}")]
+        ])
+
+        document_path = os.path.abspath(os.path.join(BASE_DOC_PATH, os.path.relpath(order["document_url"], "documents")))
+        if os.path.exists(document_path):
+            await send_method(text, reply_markup=keyboard)
+        else:
+            await send_method(f"{text}\n\n⚠️ Документ не найден по пути: {document_path}", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("assign_sm:"))
+async def handle_assign_sm(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    smetchik = await get_specialist_by_section("смета")
+
+    if not smetchik:
+        await callback.message.answer("❗️ Сметчик не найден.")
+        return
+
+    await state.set_state(AssignSmetchikFSM.waiting_for_deadline)
+    await state.update_data(
+        order_id=order_id,
+        specialist_id=smetchik["telegram_id"],
+        title=order["title"]
+    )
+
+    await callback.message.answer("📅 Введите количество дней до дедлайна (например: 5):")
+    await callback.answer()
+
+
+@router.message(AssignSmetchikFSM.waiting_for_deadline)
+async def receive_sm_deadline_days(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗️ Введите положительное число — количество дней до дедлайна.")
+        return
+
+    deadline = datetime.today().date() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignSmetchikFSM.waiting_for_description)
+    await message.answer("📝 Теперь введите описание задачи для сметчика:")
+
+
+@router.message(AssignSmetchikFSM.waiting_for_description)
+async def receive_sm_description(message: Message, state: FSMContext):
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    specialist_id = data["specialist_id"]
+    title = data["title"]
+    deadline = data["deadline"]
+    days = data["days"]
+    description = message.text.strip()
+
+    # Получаем все разделы заказа
+    sections = await get_sections_by_order_id(order_id)  # [{'section': 'ар'}, {'section': 'кж'}, ...]
+
+    print(f"[DEBUG] Полученные sections: {sections}")
+
+    await update_order_status(order_id, "assigned_sm")
+    await create_task(
+        order_id=order_id,
+        section="смета",
+        description=description,
+        deadline=deadline,
+        specialist_id=specialist_id,
+        status="Разработка сметы"
+    )
+
+    caption = (
+        f"📄 Новый заказ на разработку сметы:\n"
+        f"📌 <b>{title}</b>\n"
+        f"📝 {description}\n"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
+    )
+
+    base_dir = os.path.join(os.getcwd(), "documents", title.replace(" ", "_"))
+
+    all_files = []
+    for sec in sections:
+        section_name = sec["section"] if isinstance(sec, dict) else sec.section
+        print(f"[DEBUG] Обрабатываем section: {section_name}")
+
+        files = section_files_map.get(section_name.lower())
+        if not files:
+            continue
+
+        for file_name in files:
+            file_path = os.path.join(base_dir, file_name)
+            if os.path.exists(file_path):
+                all_files.append(file_path)
+            else:
+                await message.answer(f"⚠️ Файл не найден: {file_path}")
+
+    # Создаём общий архив
+    if all_files:
+        archive_path = os.path.join(base_dir, "combined_files.zip")
+        with zipfile.ZipFile(archive_path, 'w') as archive:
+            for file_path in all_files:
+                archive.write(file_path, arcname=os.path.basename(file_path))
+
+        # Отправляем архив
+        await message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(archive_path),
+            caption=caption,
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer("⚠️ Не найдено ни одного файла для архивации.")
+
+    await message.answer("✅ Задание передано сметчику.")
+    await state.clear()
