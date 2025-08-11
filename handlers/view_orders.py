@@ -19,7 +19,7 @@ from states.task_states import AssignGenplanFSM
 from datetime import datetime, timedelta
 from states.task_states import ReviewGenplanCorrectionFSM
 from states.task_states import AssignARFSM
-from states.states import AssignSmetchikFSM
+from states.states import AssignSmetchikFSM, AttachFilesFSM
 import zipfile
 import shutil
 import re
@@ -106,7 +106,13 @@ async def send_orders_to(recipient, send_method):
                 keyboard_buttons.append([
                     InlineKeyboardButton(text="📤 Передать СС", callback_data=f"assign_ss:{order['id']}")
                 ])
-
+             # Новые кнопки для ПЗ и ПОС
+            keyboard_buttons.append([
+                InlineKeyboardButton(text="📎 Прикрепить пояснительную записку", callback_data=f"attach_pz:{order['id']}")
+            ])
+            keyboard_buttons.append([
+                InlineKeyboardButton(text="📎 Прикрепить ПОС", callback_data=f"attach_pos:{order['id']}")
+            ])
             keyboard_buttons.append([
                 InlineKeyboardButton(text="📤 Передать экспертам", callback_data=f"send_to_expert:{order['id']}"),
                 
@@ -880,4 +886,46 @@ async def receive_sm_description(message: Message, state: FSMContext):
         await message.answer("⚠️ Не найдено ни одного файла для архивации.")
 
     await message.answer("✅ Задание передано сметчику.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("attach_pz:"))
+async def handle_attach_pz(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id, file_type="pz")
+    await callback.message.answer("📎 Отправьте файл пояснительной записки (ZIP)")
+    await state.set_state("waiting_for_pz_file")
+
+@router.message(AttachFilesFSM.waiting_for_pz_file, F.document)
+async def save_pz_file(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+
+    order = await get_order_by_id(order_id)
+    project_folder = os.path.join(BASE_DOC_PATH, os.path.basename(order["document_url"]))
+    os.makedirs(project_folder, exist_ok=True)
+
+    file = await message.document.download(destination_file=os.path.join(project_folder, "ПЗ.zip"))
+    await message.answer("✅ Пояснительная записка сохранена в проекте.")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("attach_pos:"))
+async def handle_attach_pos(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id, file_type="pos")
+    await callback.message.answer("📎 Отправьте файл ПОС (ZIP)")
+    await state.set_state(AttachFilesFSM.waiting_for_pos_file)
+
+@router.message(AttachFilesFSM.waiting_for_pos_file, F.document)
+async def save_pos_file(message: Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data["order_id"]
+
+    order = await get_order_by_id(order_id)
+    project_folder = os.path.join(BASE_DOC_PATH, os.path.basename(order["document_url"]))
+    os.makedirs(project_folder, exist_ok=True)
+
+    await message.document.download(destination_file=os.path.join(project_folder, "ПОС.zip"))
+    await message.answer("✅ ПОС сохранён в проекте.")
     await state.clear()

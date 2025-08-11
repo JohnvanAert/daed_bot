@@ -33,3 +33,8 @@ class RegisterCustomer(StatesGroup):
 class AssignSmetchikFSM(StatesGroup):
     waiting_for_deadline = State()
     waiting_for_description = State()
+
+
+class AttachFilesFSM(StatesGroup):
+    waiting_for_pz_file = State()
+    waiting_for_pos_file = State()

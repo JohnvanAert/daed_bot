@@ -9,11 +9,13 @@ from tempfile import NamedTemporaryFile
 import re
 import os
 from datetime import datetime
+import shutil
 
 load_dotenv()  # Загружаем переменные окружения
 
 
 router = Router()
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
 
 @router.message(F.text == "📦 Мои заказы")
 async def show_my_orders(message: Message, state: FSMContext):
@@ -31,18 +33,72 @@ async def show_my_orders(message: Message, state: FSMContext):
 
         caption = f"📝 <b>{title}</b>\n📍 Статус: <i>{status}</i>"
 
-        # Кнопка только если статус = Получение ИРД
-        keyboard = None
+        keyboard_buttons = []
+
+        # Если нужно отправить ИРД
         if status == "receive_ird":
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            keyboard_buttons.append(
                 [InlineKeyboardButton(text="📎 Отправить ИРД", callback_data=f"send_ird:{order_id}")]
-            ])
+            )
         elif status == "pending_correction":
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            keyboard_buttons.append(
                 [InlineKeyboardButton(text="📎 Отправить исправленное ИРД", callback_data=f"send_fixed_docs:{order_id}")]
-            ])
+            )
+
+        # Кнопка скачивания всегда
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="📥 Скачать весь проект", callback_data=f"send_project_zip:{order_id}")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
         await message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
+    
+@router.callback_query(F.data.startswith("send_project_zip:"))
+async def handle_send_project_zip(callback: CallbackQuery):
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order_by_id(order_id)
+    order_title = order["title"]
+    
+    await callback.answer("⏳ Формируем архив... Пожалуйста, подождите.")
+
+    # Название папки — с подчёркиваниями вместо пробелов
+    folder_name = order_title.replace(" ", "_")
+    project_dir = os.path.join(BASE_DOC_PATH, folder_name)
+
+    if not os.path.exists(project_dir):
+        await callback.answer("❗ Папка проекта не найдена.", show_alert=True)
+        return
+
+    # Путь к временному ZIP-архиву
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_base_name = f"{folder_name}_{timestamp}"
+    zip_path = os.path.join(BASE_DOC_PATH, f"{zip_base_name}.zip")
+
+    # Создание архива
+    shutil.make_archive(
+        base_name=os.path.join(BASE_DOC_PATH, zip_base_name),
+        format="zip",
+        root_dir=project_dir
+    )
+
+    # Отправка архива пользователю
+    try:
+        await callback.message.bot.send_document(
+            chat_id=callback.message.chat.id,
+            document=FSInputFile(zip_path),
+            caption=f"📦 Архив проекта: <b>{order_title}</b>",
+            parse_mode="HTML"
+        )
+    except Exception:
+        await callback.answer("⚠️ Не удалось отправить архив.", show_alert=True)
+        return
+    finally:
+        # Удаление архива после отправки
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+
+    await callback.answer("✅ Архив проекта отправлен.")
 
 @router.callback_query(F.data.startswith("send_ird:"))
 async def handle_send_ird(callback: CallbackQuery, state: FSMContext):

@@ -7,10 +7,14 @@ from states.states import CreateOrder, FixOrder
 from database import add_order, get_customer_by_telegram_id
 import os
 import re
+import zipfile
+import shutil
 from database import get_all_gips, get_order_by_customer_id, update_order_document
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 router = Router()
+BASE_DOC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "psdbot", "documents"))
+
 
 @router.message(F.text == "➕ Создать заказ")
 async def start_order_creation(message: Message, state: FSMContext):
@@ -40,22 +44,72 @@ async def process_document(message: Message, state: FSMContext):
     data = await state.get_data()
     title = data.get("title", "UnnamedProject")
 
-    # Временный файл
-    tmp_folder = os.path.join("documents", "temporary")  # ✔ правильноы
+    # Папка проекта
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)
+    project_folder = os.path.join(BASE_DOC_PATH, safe_title)
+    os.makedirs(project_folder, exist_ok=True)
+
+    # Временная папка
+    tmp_folder = os.path.join("documents", "temporary")
     os.makedirs(tmp_folder, exist_ok=True)
+
+    # Сохраняем загруженный файл
     file_path = os.path.join(tmp_folder, file.file_name)
     await message.bot.download(file, destination=file_path)
 
-    customer = await get_customer_by_telegram_id(message.from_user.id)
+    # === Обработка архива и разделение по папкам ===
+    temp_extract_dir = os.path.join("temp", f"ird_extract_{message.from_user.id}")
+    os.makedirs(temp_extract_dir, exist_ok=True)
 
+    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+        zip_ref.extractall(temp_extract_dir)
+
+    tu_path = os.path.join(temp_extract_dir, "ТУ")
+    geo_path = os.path.join(temp_extract_dir, "Геология")
+
+    # Сохраняем ТУ.zip
+    if os.path.exists(tu_path):
+        tu_zip = os.path.join(project_folder, "ТУ.zip")
+        with zipfile.ZipFile(tu_zip, 'w') as zipf:
+            for root, _, files in os.walk(tu_path):
+                for f in files:
+                    abs_path = os.path.join(root, f)
+                    arcname = os.path.relpath(abs_path, tu_path)
+                    zipf.write(abs_path, arcname=arcname)
+
+    # Сохраняем Геология.zip
+    if os.path.exists(geo_path):
+        geo_zip = os.path.join(project_folder, "Геология.zip")
+        with zipfile.ZipFile(geo_zip, 'w') as zipf:
+            for root, _, files in os.walk(geo_path):
+                for f in files:
+                    abs_path = os.path.join(root, f)
+                    arcname = os.path.relpath(abs_path, geo_path)
+                    zipf.write(abs_path, arcname=arcname)
+
+    # Остальное — в ИРД.zip
+    ird_zip = os.path.join(project_folder, "ИРД.zip")
+    with zipfile.ZipFile(ird_zip, 'w') as zipf:
+        for root, _, files in os.walk(temp_extract_dir):
+            if root.startswith(tu_path) or root.startswith(geo_path):
+                continue
+            for f in files:
+                abs_path = os.path.join(root, f)
+                arcname = os.path.relpath(abs_path, temp_extract_dir)
+                zipf.write(abs_path, arcname=arcname)
+
+    shutil.rmtree(temp_extract_dir, ignore_errors=True)
+
+    # Сохраняем заказ в БД
+    customer = await get_customer_by_telegram_id(message.from_user.id)
     await add_order(
         title=title,
         description=data["description"],
-        document_url=file_path,  # пока просто путь к временной папке
+        document_url=project_folder,
         customer_id=customer["id"]
     )
-    
-# 🔔 Уведомление ГИПам
+
+    # Уведомляем ГИПов
     gip_ids = await get_all_gips()
     for gip_id in gip_ids:
         try:
@@ -72,7 +126,7 @@ async def process_document(message: Message, state: FSMContext):
         except Exception as e:
             print(f"Не удалось отправить сообщение ГИПу {gip_id}: {e}")
 
-    await message.answer("✅ Заказ успешно создан!")
+    await message.answer("✅ Заказ успешно создан и документы сохранены!")
     await state.clear()
 
 @router.message(F.document, FixOrder.waiting_for_document)
