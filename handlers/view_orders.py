@@ -188,6 +188,45 @@ async def handle_send_project_zip(callback: CallbackQuery):
 
     await callback.answer("✅ Архив проекта отправлен.")
     
+def extract_with_cp1251(zip_path, dest_folder):
+    with zipfile.ZipFile(zip_path) as zf:
+        for zinfo in zf.infolist():
+            try:
+                raw_name = zinfo.filename.encode('cp437')
+            except Exception:
+                raw_name = zinfo.filename.encode(errors='replace')
+            try:
+                decoded_name = raw_name.decode('cp1251')
+            except UnicodeDecodeError:
+                try:
+                    decoded_name = raw_name.decode('utf-8')
+                except Exception:
+                    decoded_name = zinfo.filename
+            zinfo.filename = decoded_name
+            zf.extract(zinfo, dest_folder)
+
+def rename_folders_to_latin(base_folder):
+    mapping = {
+        "ИРД": "IRD",
+        "ТУ": "TU",
+        "Геология": "Geologia"
+    }
+    for old_name, new_name in mapping.items():
+        old_path = os.path.join(base_folder, old_name)
+        new_path = os.path.join(base_folder, new_name)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+
+def zip_folder(folder_path, zip_path):
+    """Упаковать папку в zip."""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                full_path = os.path.join(root, file)
+                # относительный путь внутри архива
+                rel_path = os.path.relpath(full_path, folder_path)
+                zf.write(full_path, rel_path)
+
 @router.callback_query(F.data.startswith("order_accept:"))
 async def accept_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
@@ -195,29 +234,58 @@ async def accept_order(callback: CallbackQuery):
     gip_id = callback.from_user.id
     await set_order_gip(order_id, gip_id)
 
-    # Получаем заказ и подготавливаем папку проекта
     order = await get_order_by_id(order_id)
     title = order["title"]
     safe_title = re.sub(r'[^\w\-]', '_', title)
     project_folder = os.path.join("documents", safe_title)
     os.makedirs(project_folder, exist_ok=True)
 
-    # Перемещаем исходный ZIP-файл
-    src_temp_file_path  = order["document_url"]  # Здесь пока ещё путь к временному файлу
+    src_temp_file_path = order["document_url"]
     dest_file_path = os.path.join(project_folder, "ird1_file.zip")
 
     try:
-        shutil.copy(src_temp_file_path , dest_file_path)
-        # Сохраняем в БД путь к папке, а не к файлу
+        shutil.copy(src_temp_file_path, dest_file_path)
+
+        # === 1. Распаковка ===
+        extract_with_cp1251(dest_file_path, project_folder)
+
+        # === 2. Переименовываем на латиницу ===
+        rename_folders_to_latin(project_folder)
+
+        # === 3. Архивируем нужные папки ===
+        for folder_name in ["IRD", "TU", "Geologia"]:
+            folder_path = os.path.join(project_folder, folder_name)
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                zip_path = os.path.join(project_folder, f"{folder_name}.zip")
+                zip_folder(folder_path, zip_path)
+                shutil.rmtree(folder_path)  # удаляем оригинальную папку
+
+        # === 4. Удаляем лишнее ===
+        for item in os.listdir(project_folder):
+            if item not in ["IRD.zip", "TU.zip", "Geologia.zip", "ird1_file.zip"]:
+                path = os.path.join(project_folder, item)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+
+        # === 5. Удаляем исходный архив из temporary ===
+        if os.path.exists(src_temp_file_path):
+            os.remove(src_temp_file_path)
+
+        # === 6. Сохраняем путь в БД ===
         await update_order_document_url(order_id, project_folder)
 
         await callback.message.answer(
-            f"📦 Исходный файл заказчика сохранён как <b>{safe_title}/ird1_file.zip</b>.",
+            f"📦 Исходный файл заказчика сохранён как <b>{safe_title}/ird1_file.zip</b>.\n"
+            f"📂 Папки IRD, TU и Geologia упакованы в архивы.",
             parse_mode="HTML"
         )
+
     except Exception as e:
-        await callback.message.answer(f"❗ Ошибка при копировании файла: {e}")
+        await callback.message.answer(f"❗ Ошибка при обработке файла: {e}")
         return
+
     new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Передать ЭП", callback_data=f"assign_sketch:{order_id}")]
     ])
@@ -227,8 +295,7 @@ async def accept_order(callback: CallbackQuery):
     else:
         updated_text = callback.message.text + "\n\n✅ Заказ был принят. Теперь можно передать его эскизчику."
         await callback.message.edit_text(text=updated_text, reply_markup=new_keyboard)
-
-
+        
 @router.callback_query(F.data.startswith("order_reject:"))
 async def reject_order(callback: CallbackQuery):
     order_id = int(callback.data.split(":")[1])
@@ -830,8 +897,6 @@ async def receive_sm_description(message: Message, state: FSMContext):
 
     # Получаем все разделы заказа
     sections = await get_sections_by_order_id(order_id)  # [{'section': 'ар'}, {'section': 'кж'}, ...]
-
-    print(f"[DEBUG] Полученные sections: {sections}")
 
     await update_order_status(order_id, "assigned_sm")
     await create_task(

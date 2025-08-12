@@ -1619,10 +1619,10 @@ async def handle_send_selected_section(callback: CallbackQuery, bot: Bot):
     # Список файлов по разделам
     section_files_map = {
         "ар": ["ar_files.zip", "genplan_files.zip"],
-        "кж": ["kj_files.zip", "calc_files.zip"],
-        "овик": ["ov_files.zip"],
-        "вк": ["vk_files.zip"],
-        "эо": ["eo_files.zip"],
+        "кж": ["kj_files.zip", "calc_files.zip", "Geologia.zip"],
+        "овик": ["ov_files.zip", "TU.zip"],
+        "вк": ["vk_files.zip", "TU.zip"],
+        "эо": ["eo_files.zip", "TU.zip"],
         "генплан": ["genplan_files.zip"]
     }
 

@@ -1377,8 +1377,7 @@ async def assign_task_to_expert(task_id: int, expert_id: int):
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO expert_tasks (task_id, expert_id, status)
-            VALUES ($1, $2, 'в работе')
-            ON CONFLICT (task_id, expert_id) DO NOTHING
+            VALUES ($1, $2, 'в работе'
         """, task_id, expert_id)
 
 
