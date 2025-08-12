@@ -1377,7 +1377,9 @@ async def assign_task_to_expert(task_id: int, expert_id: int):
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO expert_tasks (task_id, expert_id, status)
-            VALUES ($1, $2, 'в работе'
+            VALUES ($1, $2, 'в работе')
+            ON CONFLICT (task_id, expert_id)
+            DO UPDATE SET status = 'в работе'
         """, task_id, expert_id)
 
 
@@ -1565,3 +1567,13 @@ async def get_estimate_task_document(order_id: int):
             WHERE order_id = $1 AND section = 'смета'
         """, order_id)
         return row["document_url"] if row else None
+
+
+async def get_order_document_url(order_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT document_url, id AS order_id
+            FROM orders
+            WHERE id = $1
+        """, order_id)
+        return dict(row) if row else None

@@ -1,6 +1,6 @@
 from aiogram import Router, F, types
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url, get_completed_orders, get_sections_by_order_id, get_estimate_task_document
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url, get_completed_orders, get_sections_by_order_id, get_estimate_task_document, get_order_document_url
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -920,7 +920,7 @@ async def receive_sm_description(message: Message, state: FSMContext):
     all_files = []
     for sec in sections:
         section_name = sec["section"] if isinstance(sec, dict) else sec.section
-        print(f"[DEBUG] Обрабатываем section: {section_name}")
+
 
         files = section_files_map.get(section_name.lower())
         if not files:
@@ -933,6 +933,13 @@ async def receive_sm_description(message: Message, state: FSMContext):
             else:
                 await message.answer(f"⚠️ Файл не найден: {file_path}")
 
+     # 2️⃣ Добавляем ПОС.zip и ПЗ.zip, если они есть
+    for extra_file in ["ПОС.zip", "ПЗ.zip"]:
+        extra_path = os.path.join(base_dir, extra_file)
+        if os.path.exists(extra_path):
+            all_files.append(extra_path)
+        else:
+            await message.answer(f"⚠️ Файл {extra_file} не найден в {base_dir}")
     # Создаём общий архив
     if all_files:
         archive_path = os.path.join(base_dir, "combined_files.zip")
@@ -959,7 +966,8 @@ async def handle_attach_pz(callback: CallbackQuery, state: FSMContext):
     order_id = int(callback.data.split(":")[1])
     await state.update_data(order_id=order_id, file_type="pz")
     await callback.message.answer("📎 Отправьте файл пояснительной записки (ZIP)")
-    await state.set_state("waiting_for_pz_file")
+    await state.set_state(AttachFilesFSM.waiting_for_pz_file)
+
 
 @router.message(AttachFilesFSM.waiting_for_pz_file, F.document)
 async def save_pz_file(message: Message, state: FSMContext):
@@ -967,13 +975,21 @@ async def save_pz_file(message: Message, state: FSMContext):
     order_id = data["order_id"]
 
     order = await get_order_by_id(order_id)
+    if not order:
+        await message.answer("❗ Не найден заказ.")
+        await state.clear()
+        return
+
     project_folder = os.path.join(BASE_DOC_PATH, os.path.basename(order["document_url"]))
     os.makedirs(project_folder, exist_ok=True)
 
-    file = await message.document.download(destination_file=os.path.join(project_folder, "ПЗ.zip"))
+    await message.bot.download(
+        message.document,
+        destination=os.path.join(project_folder, "ПЗ.zip")
+    )
+
     await message.answer("✅ Пояснительная записка сохранена в проекте.")
     await state.clear()
-
 
 @router.callback_query(F.data.startswith("attach_pos:"))
 async def handle_attach_pos(callback: CallbackQuery, state: FSMContext):
@@ -982,15 +998,24 @@ async def handle_attach_pos(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📎 Отправьте файл ПОС (ZIP)")
     await state.set_state(AttachFilesFSM.waiting_for_pos_file)
 
+
 @router.message(AttachFilesFSM.waiting_for_pos_file, F.document)
 async def save_pos_file(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = data["order_id"]
 
-    order = await get_order_by_id(order_id)
-    project_folder = os.path.join(BASE_DOC_PATH, os.path.basename(order["document_url"]))
+    order_info = await get_order_document_url(order_id)
+    if not order_info:
+        await message.answer("❗ Не найден заказ.")
+        await state.clear()
+        return
+
+    project_folder = os.path.join(BASE_DOC_PATH, os.path.basename(order_info["document_url"]))
     os.makedirs(project_folder, exist_ok=True)
 
-    await message.document.download(destination_file=os.path.join(project_folder, "ПОС.zip"))
+    await message.bot.download(
+        message.document,
+        destination=os.path.join(project_folder, "ПОС.zip")
+    )
     await message.answer("✅ ПОС сохранён в проекте.")
     await state.clear()
