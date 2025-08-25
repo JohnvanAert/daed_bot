@@ -871,19 +871,38 @@ async def receive_ovik_deadline_days(message: Message, state: FSMContext):
     await state.set_state(AssignOVIKFSM.waiting_for_description)
     await message.answer("📝 Теперь введите описание задачи по ОВиК/ТС:")
 
-
 @router.message(AssignOVIKFSM.waiting_for_description)
 async def receive_ovik_description(message: Message, state: FSMContext):
     description = message.text.strip()
     data = await state.get_data()
 
+    await state.update_data(description=description)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[ 
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_ovik_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_ovik_sign:no")
+    ]])
+
+    await message.answer("📄 Передать договор по ОВиК специалисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_ovik_sign:"))
+async def handle_confirm_ovik_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
+    data = await state.get_data()
+
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     document_url = data["document_url"]
     deadline = data["deadline"]
     days = data["days"]
 
+    # получаем специалиста полностью
+    specialist = await get_specialist_by_section("овик")
+
+    # создаём задачу
     await update_order_status(order_id, "assigned_ovik")
     await create_task(
         order_id=order_id,
@@ -891,33 +910,57 @@ async def receive_ovik_description(message: Message, state: FSMContext):
         description=description,
         deadline=deadline,
         specialist_id=specialist_id,
-        status="Разработка ОВиК/ТС"
+        status="назначено"
     )
 
+    # отправляем проектные файлы
     doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
-        await state.clear()
-        return
+    ovik_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
+    ovik_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ovik_zip_rel_path))
 
     caption = (
-        f"📄 Новый заказ по разделу ОВиК/ТС:\n"
+        f"📄 Новый заказ по разделу <b>ОВиК/ТС</b>:\n"
         f"📌 <b>{title}</b>\n"
         f"📝 {description}\n"
         f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(ovik_zip_abs_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание по ОВиК передано.")
+    # договор (если выбрано "Да")
+    if choice == "yes":
+        contractor = {
+            "name": specialist.get("full_name", "—"),
+            "bin": specialist.get("iin", "—"),
+            "address": specialist.get("address", "—"),
+            "bank": specialist.get("bank", "—"),
+            "iban": specialist.get("iban", "—"),
+            "bik": specialist.get("bik", "—"),
+            "kbe": specialist.get("kbe", "19"),
+            "email": specialist.get("email", "—"),
+            "phone": specialist.get("phone", "—"),
+        }
+
+        contract_path = await generate_contract(
+            order_id, "овик", title, description, deadline, contractor, price=0
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (ОВиК/ТС)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по ОВиК ✅")
+    else:
+        await callback.message.answer("✅ Задача по ОВиК передана без договора.")
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
     await state.clear()
 
 
@@ -1057,50 +1100,97 @@ async def receive_gs_deadline_days(message: Message, state: FSMContext):
 @router.message(AssignGSFSM.waiting_for_description)
 async def receive_gs_description(message: Message, state: FSMContext):
     description = message.text.strip()
+    await state.update_data(description=description)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[ 
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_gs_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_gs_sign:no")
+    ]])
+
+    await message.answer("📄 Передать договор по ГС специалисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_gs_sign:"))
+async def handle_confirm_gs_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
 
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     document_url = data["document_url"]
     deadline = data["deadline"]
     days = data["days"]
 
+    # берём полные данные специалиста
+    specialist = await get_specialist_by_section("гс")
+
+    # создаём задачу
     await update_order_status(order_id, "assigned_gs")
     await create_task(
         order_id=order_id,
-        section="гс",  # или "гс"
+        section="гс",
         description=description,
         deadline=deadline,
         specialist_id=specialist_id,
-        status="Разработка ГС"
+        status="назначено"
     )
 
+    # файлы
     doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
+    gs_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
+    gs_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", gs_zip_rel_path))
+
+    if not os.path.exists(gs_zip_abs_path):
+        await callback.message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
         return
 
     caption = (
-        f"📄 Новый заказ по разделу ГC:\n"
+        f"📄 Новый заказ по разделу <b>ГС</b>:\n"
         f"📌 <b>{title}</b>\n"
         f"📝 {description}\n"
         f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(gs_zip_abs_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание по ГС передано.")
-    await state.clear()
+    # договор (если выбрано "Да")
+    if choice == "yes":
+        contractor = {
+            "name": specialist.get("full_name", "—"),
+            "bin": specialist.get("iin", "—"),
+            "address": specialist.get("address", "—"),
+            "bank": specialist.get("bank", "—"),
+            "iban": specialist.get("iban", "—"),
+            "bik": specialist.get("bik", "—"),
+            "kbe": specialist.get("kbe", "19"),
+            "email": specialist.get("email", "—"),
+            "phone": specialist.get("phone", "—"),
+        }
 
+        contract_path = await generate_contract(
+            order_id, "гс", title, description, deadline, contractor, price=0
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (ГС)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по ГС ✅")
+    else:
+        await callback.message.answer("✅ Задача по ГС передана без договора.")
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
+    await state.clear()
 
 @router.callback_query(F.data.startswith("revise_gs:"))
 async def handle_gs_revision(callback: CallbackQuery, state: FSMContext):
@@ -1239,15 +1329,32 @@ async def receive_vk_deadline_days(message: Message, state: FSMContext):
 @router.message(AssignVKFSM.waiting_for_description)
 async def receive_vk_description(message: Message, state: FSMContext):
     description = message.text.strip()
+    await state.update_data(description=description)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_vk_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_vk_sign:no")
+    ]])
+
+    await message.answer("📄 Передать договор по ВК/НВК специалисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_vk_sign:"))
+async def handle_confirm_vk_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
 
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     document_url = data["document_url"]
     deadline = data["deadline"]
     days = data["days"]
 
+    specialist = await get_specialist_by_section("вк")
+
+    # создаём задачу
     await update_order_status(order_id, "assigned_vk")
     await create_task(
         order_id=order_id,
@@ -1255,33 +1362,63 @@ async def receive_vk_description(message: Message, state: FSMContext):
         description=description,
         deadline=deadline,
         specialist_id=specialist_id,
-        status="Разработка ВК"
+        status="назначено"
     )
 
+    # проверка и отправка файлов
     doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
+    vk_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
+    vk_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", vk_zip_rel_path))
+    if not os.path.exists(vk_zip_abs_path):
+        await callback.message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
         return
 
     caption = (
-        f"📄 Новый заказ по разделу ВК/НВК:\n"
+        f"📄 Новый заказ по разделу <b>ВК/НВК</b>:\n"
         f"📌 <b>{title}</b>\n"
         f"📝 {description}\n"
         f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(vk_zip_abs_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание по ВК/НВК передано.")
+    # если выбрано "Да" → отправляем договор
+    if choice == "yes":
+        contractor = {
+            "name": specialist.get("full_name", "—"),
+            "bin": specialist.get("iin", "—"),
+            "address": specialist.get("address", "—"),
+            "bank": specialist.get("bank", "—"),
+            "iban": specialist.get("iban", "—"),
+            "bik": specialist.get("bik", "—"),
+            "kbe": specialist.get("kbe", "19"),
+            "email": specialist.get("email", "—"),
+            "phone": specialist.get("phone", "—"),
+        }
+
+        contract_path = await generate_contract(
+            order_id, "вк", title, description, deadline, contractor, price=0
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (ВК/НВК)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по ВК ✅")
+    else:
+        await callback.message.answer("✅ Задача по ВК передана без договора.")
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
     await state.clear()
+
 
 @router.callback_query(F.data.startswith("gip_vk_approve:"))
 async def handle_gip_vk_approval(callback: CallbackQuery):
@@ -1424,17 +1561,33 @@ async def receive_eom_deadline_days(message: Message, state: FSMContext):
 
 @router.message(AssignEOMFSM.waiting_for_description)
 async def receive_eom_description(message: Message, state: FSMContext):
-
     description = message.text.strip()
+    await state.update_data(description=description)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_eom_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_eom_sign:no")
+    ]])
+
+    await message.answer("📑 Передать договор по ЭОМ специалисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_eom_sign:"))
+async def handle_confirm_eom_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
 
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     document_url = data["document_url"]
     deadline = data["deadline"]
     days = data["days"]
 
+    specialist = await get_specialist_by_section("эом")
+
+    # создаём задачу
     await update_order_status(order_id, "assigned_eom")
     await create_task(
         order_id=order_id,
@@ -1442,34 +1595,63 @@ async def receive_eom_description(message: Message, state: FSMContext):
         description=description,
         deadline=deadline,
         specialist_id=specialist_id,
-        status="Разработка ЭОМ"
+        status="назначено"
     )
 
+    # проверка и отправка файлов
     doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
+    eom_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
+    eom_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", eom_zip_rel_path))
+    if not os.path.exists(eom_zip_abs_path):
+        await callback.message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
         return
 
     caption = (
-        f"📄 Новый заказ на разработку ЭОМ:\n"
+        f"📄 Новый заказ по разделу <b>ЭОМ</b>:\n"
         f"📌 <b>{title}</b>\n"
         f"📝 {description}\n"
-        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})\n"
-        f"💬 Комментарий: Передан заказ на разработку ЭОМ"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(eom_zip_abs_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание передано специалисту по ЭОМ.")
+    # если выбрано "Да" → договор
+    if choice == "yes":
+        contractor = {
+            "name": specialist.get("full_name", "—"),
+            "bin": specialist.get("iin", "—"),
+            "address": specialist.get("address", "—"),
+            "bank": specialist.get("bank", "—"),
+            "iban": specialist.get("iban", "—"),
+            "bik": specialist.get("bik", "—"),
+            "kbe": specialist.get("kbe", "19"),
+            "email": specialist.get("email", "—"),
+            "phone": specialist.get("phone", "—"),
+        }
+
+        contract_path = await generate_contract(
+            order_id, "эом", title, description, deadline, contractor, price=0
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (ЭОМ)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по ЭОМ ✅")
+    else:
+        await callback.message.answer("✅ Задача по ЭОМ передана без договора.")
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
     await state.clear()
+
 
 @router.callback_query(F.data.startswith("gip_eom_approve:"))
 async def handle_gip_eom_approval(callback: CallbackQuery):
@@ -1612,19 +1794,33 @@ async def receive_ss_deadline_days(message: Message, state: FSMContext):
 
 @router.message(AssignSSFSM.waiting_for_description)
 async def receive_ss_description(message: Message, state: FSMContext):
-    from aiogram.types import FSInputFile
-    import os
-
     description = message.text.strip()
+    await state.update_data(description=description)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_ss_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_ss_sign:no")
+    ]])
+
+    await message.answer("📑 Передать договор по СС специалисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_ss_sign:"))
+async def handle_confirm_ss_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
 
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     document_url = data["document_url"]
     deadline = data["deadline"]
     days = data["days"]
 
+    specialist = await get_specialist_by_section("сс")
+
+    # создаём задачу
     await update_order_status(order_id, "assigned_ss")
     await create_task(
         order_id=order_id,
@@ -1632,34 +1828,62 @@ async def receive_ss_description(message: Message, state: FSMContext):
         description=description,
         deadline=deadline,
         specialist_id=specialist_id,
-        status="Разработка СС"
+        status="назначено"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
+    # отправляем файлы
+    ss_zip_rel_path = os.path.join(document_url, "genplan_files.zip")
+    ss_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ss_zip_rel_path))
+    if not os.path.exists(ss_zip_abs_path):
+        await callback.message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
         return
 
     caption = (
-        f"📄 Новый заказ на разработку СС:\n"
+        f"📄 Новый заказ на разработку <b>СС</b>:\n"
         f"📌 <b>{title}</b>\n"
         f"📝 {description}\n"
-        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})\n"
-        f"💬 Комментарий: Передан заказ на разработку СС"
+        f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(ss_zip_abs_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание передано специалисту по СС.")
+    # если выбрано "Да" → договор
+    if choice == "yes":
+        contractor = {
+            "name": specialist.get("full_name", "—"),
+            "bin": specialist.get("iin", "—"),
+            "address": specialist.get("address", "—"),
+            "bank": specialist.get("bank", "—"),
+            "iban": specialist.get("iban", "—"),
+            "bik": specialist.get("bik", "—"),
+            "kbe": specialist.get("kbe", "19"),
+            "email": specialist.get("email", "—"),
+            "phone": specialist.get("phone", "—"),
+        }
+
+        contract_path = await generate_contract(
+            order_id, "сс", title, description, deadline, contractor, price=0
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (СС)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по СС ✅")
+    else:
+        await callback.message.answer("✅ Задача по СС передана без договора.")
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
     await state.clear()
+
 
 
 @router.callback_query(F.data.startswith("gip_ss_approve:"))
