@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status, save_kj_file_path_to_tasks, get_ovik_task_document, get_eom_task_document, get_ss_task_document, get_kj_task_document, get_vk_task_document, get_task_document_by_section, get_all_experts, update_task_document_url, get_gs_task_document, update_all_sections_status, get_all_experts_i, create_or_get_task, assign_task_to_expert
+from database import get_order_by_id, get_customer_telegram_id, get_specialist_by_section, update_order_status, create_task, get_specialist_by_order_and_section, get_ar_task_document, update_task_status, save_kj_file_path_to_tasks, get_ovik_task_document, get_eom_task_document, get_ss_task_document, get_kj_task_document, get_vk_task_document, get_task_document_by_section, get_all_experts, update_task_document_url, get_gs_task_document, update_all_sections_status, get_all_experts_i, create_or_get_task, assign_task_to_expert, get_user_by_id, get_user_by_telegram_id
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.types import FSInputFile
 import os
@@ -15,7 +15,8 @@ from states.ar_correction import ReviewArCorrectionFSM
 import shutil
 from states.task_states import AssignARFSM, AssignKJFSM, ReviewKjCorrectionFSM, AssignOVIKFSM, ReviewOvikCorrectionFSM, AssignGSFSM, ReviewGSCorrectionFSM, AssignVKFSM, ReviewVkCorrectionFSM, AssignEOMFSM, ReviewEomCorrectionFSM, AssignSSFSM, ReviewSSCorrectionFSM
 import re
-
+from docx import Document as DocxDocument
+import yaml
 
 load_dotenv()
 
@@ -299,7 +300,6 @@ async def handle_assign_ar(callback: CallbackQuery, state: FSMContext):
     
 @router.message(AssignARFSM.waiting_for_deadline)
 async def receive_ar_deadline_days(message: Message, state: FSMContext):
-    from datetime import datetime, timedelta
 
     try:
         days = int(message.text.strip())
@@ -315,19 +315,58 @@ async def receive_ar_deadline_days(message: Message, state: FSMContext):
     await message.answer("📝 Теперь введите описание задачи по АР:")
 
 
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+yaml_path = os.path.join(BASE_DIR, "..", "delivery_requirements.yaml")
+
+with open(yaml_path, "r", encoding="utf-8") as f:
+    DELIVERY_REQUIREMENTS = yaml.safe_load(f)
+
 @router.message(AssignARFSM.waiting_for_description)
 async def receive_ar_description(message: Message, state: FSMContext):
-    from aiogram.types import FSInputFile
-    import os
-
     description = message.text.strip()
-    data = await state.get_data()
+    await state.update_data(description=description)
 
+    await state.set_state(AssignARFSM.waiting_for_price)
+    await message.answer("💰 Укажите сумму договора (в KZT):")
+
+@router.message(AssignARFSM.waiting_for_price)
+async def receive_ar_price(message: Message, state: FSMContext):
+    try:
+        price = float(message.text.strip().replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗️ Введите корректную сумму (например: 150000).")
+        return
+
+    await state.update_data(price=price)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_ar_sign:yes"),
+            InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_ar_sign:no")
+        ]
+    ])
+    await message.answer("📄 Передать документ для подписи?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_ar_sign:"))
+async def handle_confirm_ar_sign(callback: CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    
+
+    choice = callback.data.split(":")[1]
+    data = await state.get_data()
+    
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
+    description = data["description"]
     deadline = data["deadline"]
     days = data["days"]
+    price = data["price"]
 
     await update_order_status(order_id, "assigned_ar")
     await create_task(
@@ -339,12 +378,11 @@ async def receive_ar_description(message: Message, state: FSMContext):
         status="Разработка АР"
     )
 
-    # Используем безопасное название проекта
     safe_title = re.sub(r'[^\w\-]', '_', title)
     doc_path = os.path.abspath(os.path.join("documents", safe_title, "ep.pdf"))
 
     if not os.path.exists(doc_path):
-        await message.answer("❗️ Не удалось найти файл заказа: ep.pdf.")
+        await callback.message.answer("❗️ Не удалось найти файл заказа: ep.pdf.")
         await state.clear()
         return
 
@@ -356,15 +394,108 @@ async def receive_ar_description(message: Message, state: FSMContext):
         f"💬 Комментарий: Передан заказ на разработку АР"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
         document=FSInputFile(doc_path),
         caption=caption,
         parse_mode="HTML"
     )
+    specialist = await get_user_by_telegram_id(specialist_id)  # 👈 функция для БД
+    contractor = {
+        "name": specialist["full_name"],
+        "bin": specialist["iin"],
+        "address": specialist.get("address", "—"),
+        "bank": specialist.get("bank", "—"),
+        "iban": specialist.get("iban", "—"),
+        "bik": specialist.get("bik", "—"),
+        "kbe": specialist.get("kbe", "19"),
+        "email": specialist.get("email", "—"),
+        "phone": specialist.get("phone", "—"),
+    }
 
-    await message.answer("✅ Задание передано специалисту по АР.")
+    # Если выбрано "Да" — формируем и отправляем договор в Word
+    section = data.get("section", "ар")
+    if choice == "yes":
+        contract_path = await generate_contract(order_id, section, title, description, deadline, contractor, price)
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ",
+            parse_mode="HTML"
+        )
+
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по АР ✅")
+
+    else:
+        await callback.message.answer("✅ Задача передана без договора.")
+    
     await state.clear()
+
+def _get_delivery_block(section: str) -> str:
+    """Формирует текст для {DELIVERY_REQUIREMENTS} из YAML"""
+    raw = DELIVERY_REQUIREMENTS.get(section)
+    if not raw:
+        return "—"
+
+    # если это строка с многострочным текстом
+    if isinstance(raw, str):
+        # разрезаем по строкам
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        # если внутри уже есть "-" — превратим в красивые маркеры
+        formatted = []
+        for line in lines:
+            if line.startswith("-"):
+                formatted.append("• " + line.lstrip("-").strip())
+            else:
+                formatted.append(line)
+        return "\n".join(formatted)
+
+    # если YAML вернул список
+    if isinstance(raw, list):
+        return "\n".join("• " + str(item) for item in raw)
+
+    return str(raw)
+    
+
+async def generate_contract(order_id, section, title, description, deadline, contractor, price):
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(BASE_DIR, "..", "templates", "contract_template.docx")
+    save_path = os.path.join("documents", f"contract_{section}_{order_id}.docx")
+
+    doc = DocxDocument(template_path)
+
+    delivery_text = _get_delivery_block(section)
+
+    def safe(value, default="—"):
+        """Гарантирует строку вместо None"""
+        if value is None:
+            return default
+        return str(value)
+
+    for p in doc.paragraphs:
+        p.text = p.text.replace("{TITLE}", safe(title))
+        p.text = p.text.replace("{DESCRIPTION}", safe(description))
+        p.text = p.text.replace("{DEADLINE}", deadline.strftime("%d.%m.%Y"))
+        p.text = p.text.replace("{SECTION}", safe(section.upper()))
+        p.text = p.text.replace("{DELIVERY_REQUIREMENTS}", safe(delivery_text))
+        p.text = p.text.replace("{PRICE}", safe(str(price)))
+
+        # реквизиты подрядчика
+        p.text = p.text.replace("{CONTRACTOR_NAME}", safe(contractor.get("name")))
+        p.text = p.text.replace("{CONTRACTOR_BIN}", safe(contractor.get("bin")))
+        p.text = p.text.replace("{CONTRACTOR_ADDRESS}", safe(contractor.get("address")))
+        p.text = p.text.replace("{CONTRACTOR_BANK}", safe(contractor.get("bank")))
+        p.text = p.text.replace("{CONTRACTOR_IBAN}", safe(contractor.get("iban")))
+        p.text = p.text.replace("{CONTRACTOR_BIK}", safe(contractor.get("bik")))
+        p.text = p.text.replace("{CONTRACTOR_KBE}", safe(contractor.get("kbe", "19")))
+        p.text = p.text.replace("{CONTRACTOR_EMAIL}", safe(contractor.get("email")))
+        p.text = p.text.replace("{CONTRACTOR_PHONE}", safe(contractor.get("phone")))
+        
+
+
+    doc.save(save_path)
+    return save_path
+
 
 @router.callback_query(F.data.startswith("gip_ar_approve:"))
 async def handle_gip_ar_approval(callback: CallbackQuery):
@@ -502,14 +633,46 @@ async def receive_kj_deadline_days(message: Message, state: FSMContext):
 @router.message(AssignKJFSM.waiting_for_description)
 async def receive_kj_description(message: Message, state: FSMContext):
     description = message.text.strip()
+    await state.update_data(description=description)
+
+    await state.set_state(AssignKJFSM.waiting_for_price)
+    await message.answer("💰 Укажите сумму договора (в KZT):")
+
+@router.message(AssignKJFSM.waiting_for_price)
+async def receive_kj_price(message: Message, state: FSMContext):
+    try:
+        price = float(message.text.strip().replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗️ Введите корректную сумму (например: 200000).")
+        return
+
+    await state.update_data(price=price)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_kj_sign:yes"),
+            InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_kj_sign:no")
+        ]
+    ])
+    await message.answer("📄 Передать документ для подписи?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_kj_sign:"))
+async def handle_confirm_kj_sign(callback: CallbackQuery, state: FSMContext):
+    await callback.message.delete()
+    
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
 
     order_id = data["order_id"]
     specialist_id = data["specialist_id"]
     title = data["title"]
-    document_url = data["document_url"]
+    description = data["description"]
     deadline = data["deadline"]
     days = data["days"]
+    price = data["price"]
 
     await update_order_status(order_id, "assigned_kj")
     await create_task(
@@ -521,11 +684,10 @@ async def receive_kj_description(message: Message, state: FSMContext):
         status="Разработка КЖ"
     )
 
-    doc_path = os.path.abspath(os.path.join("..", "psdbot", document_url))
-    ar_zip_rel_path = os.path.join(document_url, "ar_files.zip")
-    ar_zip_abs_path = os.path.abspath(os.path.join("..", "psdbot", ar_zip_rel_path))
-    if not os.path.exists(ar_zip_abs_path):
-        await message.answer("❗️ Не удалось найти файл заказа.")
+    # путь к файлу
+    doc_path = os.path.abspath(os.path.join("..", "psdbot", data["document_url"], "ar_files.zip"))
+    if not os.path.exists(doc_path):
+        await callback.message.answer("❗️ Не удалось найти файл заказа.")
         await state.clear()
         return
 
@@ -536,14 +698,39 @@ async def receive_kj_description(message: Message, state: FSMContext):
         f"📅 Дедлайн через {days} дн. ({deadline.strftime('%d.%m.%Y')})"
     )
 
-    await message.bot.send_document(
+    await callback.message.bot.send_document(
         chat_id=specialist_id,
-        document=FSInputFile(ar_zip_abs_path),
+        document=FSInputFile(doc_path),
         caption=caption,
         parse_mode="HTML"
     )
 
-    await message.answer("✅ Задание по КЖ передано.")
+    # реквизиты подрядчика
+    specialist = await get_user_by_telegram_id(specialist_id)
+    contractor = {
+        "name": specialist["full_name"],
+        "bin": specialist["iin"],
+        "address": specialist.get("address", "—"),
+        "bank": specialist.get("bank", "—"),
+        "iban": specialist.get("iban", "—"),
+        "bik": specialist.get("bik", "—"),
+        "kbe": specialist.get("kbe", "19"),
+        "email": specialist.get("email", "—"),
+        "phone": specialist.get("phone", "—"),
+    }
+
+    if choice == "yes":
+        contract_path = await generate_contract(order_id, "кж", title, description, deadline, contractor, price)
+        await callback.message.bot.send_document(
+            chat_id=specialist_id,
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен специалисту по КЖ ✅")
+    else:
+        await callback.message.answer("✅ Задача передана без договора.")
+
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve_kj:"))

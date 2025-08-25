@@ -1,6 +1,6 @@
 from aiogram import Router, F, types
 from aiogram.types import Message, CallbackQuery, FSInputFile
-from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url, get_completed_orders, get_sections_by_order_id, get_estimate_task_document, get_order_document_url
+from database import get_all_orders, get_customer_telegram_id, create_task, get_order_by_id, get_specialist_by_section, get_specialist_by_order_and_section, update_task_status, get_genplan_task_document, get_calc_task_document, update_task_document_path, is_section_task_done, are_all_sections_done, update_order_document_url, update_task_document_url, get_completed_orders, get_sections_by_order_id, get_estimate_task_document, get_order_document_url, get_user_by_telegram_id
 import os
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram import Bot
@@ -23,6 +23,8 @@ from states.states import AssignSmetchikFSM, AttachFilesFSM
 import zipfile
 import shutil
 import re
+from docx import Document as DocxDocument
+import yaml
 load_dotenv()
 router = Router()
 ALLOWED_STATUSES = {
@@ -439,7 +441,7 @@ async def receive_description(message: Message, state: FSMContext):
     await message.answer("📅 Укажите дедлайн в днях (например, 3):")
 
 @router.message(AssignCalculatorFSM.waiting_for_deadline)
-async def receive_deadline(message: Message, state: FSMContext):
+async def receive_calculator_deadline(message: Message, state: FSMContext):
     try:
         days = int(message.text.strip())
         if days <= 0:
@@ -448,18 +450,52 @@ async def receive_deadline(message: Message, state: FSMContext):
         await message.answer("❗ Введите положительное число (например, 5)")
         return
 
+    deadline = date.today() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignCalculatorFSM.waiting_for_price)
+    await message.answer("💰 Укажите сумму договора (в KZT):")
+
+@router.message(AssignCalculatorFSM.waiting_for_price)
+async def receive_calculator_price(message: Message, state: FSMContext):
+    try:
+        price = float(message.text.strip().replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите корректную сумму (например: 150000).")
+        return
+
+    await state.update_data(price=price)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_calculator_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_calculator_sign:no")
+    ]])
+
+    await message.answer("📄 Передать документ для подписи расчетчику?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_calculator_sign:"))
+async def handle_confirm_calculator_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
     data = await state.get_data()
+
     order_id = data["order_id"]
     description = data["description"]
-    deadline = date.today() + timedelta(days=days)
+    deadline = data["deadline"]
+    days = data["days"]
+    price = data["price"]
 
     order = await get_order_by_id(order_id)
     calculator = await get_specialist_by_section("рс")
+
     if not calculator:
-        await message.answer("❗ Расчетчик не найден.")
+        await callback.message.answer("❗ Расчетчик не найден.")
         await state.clear()
         return
 
+    calculator = await get_user_by_telegram_id(calculator["telegram_id"])
+    # создаём задачу
     await create_task(
         order_id=order_id,
         section="рс",
@@ -469,10 +505,118 @@ async def receive_deadline(message: Message, state: FSMContext):
         status="назначено"
     )
 
-    await send_project_files(order["title"], calculator["telegram_id"], message.bot, "рс")
+    # отправляем проектные файлы
+    await send_project_files(order["title"], calculator["telegram_id"], callback.message.bot, "рс")
 
-    await message.answer("✅ Задание успешно создано и передано расчетчику.")
+    # реквизиты
+    contractor = {
+        "name": calculator["full_name"],
+        "bin": calculator["iin"],
+        "address": calculator.get("address", "—"),
+        "bank": calculator.get("bank", "—"),
+        "iban": calculator.get("iban", "—"),
+        "bik": calculator.get("bik", "—"),
+        "kbe": calculator.get("kbe", "19"),
+        "email": calculator.get("email", "—"),
+        "phone": calculator.get("phone", "—"),
+    }
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
+
+    # договор (если выбрано "Да")
+    if choice == "yes":
+        contract_path = await generate_contract(
+            order_id, "рс", order["title"], description, deadline, contractor, price
+        )
+        await callback.message.bot.send_document(
+            chat_id=calculator["telegram_id"],
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (РС)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен расчетчику ✅")
+    else:
+        await callback.message.answer("✅ Задача передана без договора расчетчику.")
+
     await state.clear()
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+yaml_path = os.path.join(BASE_DIR, "..", "delivery_requirements.yaml")
+
+with open(yaml_path, "r", encoding="utf-8") as f:
+    DELIVERY_REQUIREMENTS = yaml.safe_load(f)
+
+
+
+def _get_delivery_block(section: str) -> str:
+    """Формирует текст для {DELIVERY_REQUIREMENTS} из YAML"""
+    raw = DELIVERY_REQUIREMENTS.get(section)
+    if not raw:
+        return "—"
+
+    # если это строка с многострочным текстом
+    if isinstance(raw, str):
+        # разрезаем по строкам
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        # если внутри уже есть "-" — превратим в красивые маркеры
+        formatted = []
+        for line in lines:
+            if line.startswith("-"):
+                formatted.append("• " + line.lstrip("-").strip())
+            else:
+                formatted.append(line)
+        return "\n".join(formatted)
+
+    # если YAML вернул список
+    if isinstance(raw, list):
+        return "\n".join("• " + str(item) for item in raw)
+
+    return str(raw)
+    
+
+async def generate_contract(order_id, section, title, description, deadline, contractor, price):
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(BASE_DIR, "..", "templates", "contract_template.docx")
+    save_path = os.path.join("documents", f"contract_{section}_{order_id}.docx")
+
+    doc = DocxDocument(template_path)
+
+    delivery_text = _get_delivery_block(section)
+
+    def safe(value, default="—"):
+        """Гарантирует строку вместо None"""
+        if value is None:
+            return default
+        return str(value)
+
+    for p in doc.paragraphs:
+        p.text = p.text.replace("{TITLE}", safe(title))
+        p.text = p.text.replace("{DESCRIPTION}", safe(description))
+        p.text = p.text.replace("{DEADLINE}", deadline.strftime("%d.%m.%Y"))
+        p.text = p.text.replace("{SECTION}", safe(section.upper()))
+        p.text = p.text.replace("{DELIVERY_REQUIREMENTS}", safe(delivery_text))
+        p.text = p.text.replace("{PRICE}", safe(str(price)))
+
+        # реквизиты подрядчика
+        p.text = p.text.replace("{CONTRACTOR_NAME}", safe(contractor.get("name")))
+        p.text = p.text.replace("{CONTRACTOR_BIN}", safe(contractor.get("bin")))
+        p.text = p.text.replace("{CONTRACTOR_ADDRESS}", safe(contractor.get("address")))
+        p.text = p.text.replace("{CONTRACTOR_BANK}", safe(contractor.get("bank")))
+        p.text = p.text.replace("{CONTRACTOR_IBAN}", safe(contractor.get("iban")))
+        p.text = p.text.replace("{CONTRACTOR_BIK}", safe(contractor.get("bik")))
+        p.text = p.text.replace("{CONTRACTOR_KBE}", safe(contractor.get("kbe", "19")))
+        p.text = p.text.replace("{CONTRACTOR_EMAIL}", safe(contractor.get("email")))
+        p.text = p.text.replace("{CONTRACTOR_PHONE}", safe(contractor.get("phone")))
+        
+
+
+    doc.save(save_path)
+    return save_path
+
+
+
 
 @router.callback_query(F.data.startswith("approve_calc:"))
 async def handle_calc_approval(callback: CallbackQuery):
@@ -603,45 +747,104 @@ async def get_genplan_description(message: Message, state: FSMContext):
     await state.set_state(AssignGenplanFSM.waiting_for_deadline)
     await message.answer("📅 Укажите срок выполнения (Введите количество дней, например: 7):")
 
-
 @router.message(AssignGenplanFSM.waiting_for_deadline)
 async def get_genplan_deadline(message: Message, state: FSMContext):
-    data = await state.get_data()
-    order_id = data["order_id"]
-    description = data["description"]
-    days_str = message.text.strip()
-
-    if not days_str.isdigit():
-        await message.answer("❗ Введите количество дней, например: 7")
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите положительное число (например: 7)")
         return
 
-    days = int(days_str)
     deadline = datetime.now() + timedelta(days=days)
+    await state.update_data(deadline=deadline, days=days)
+    await state.set_state(AssignGenplanFSM.waiting_for_price)
+    await message.answer("💰 Укажите сумму договора (в KZT):")
+
+@router.message(AssignGenplanFSM.waiting_for_price)
+async def get_genplan_price(message: Message, state: FSMContext):
+    try:
+        price = float(message.text.strip().replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите корректную сумму (например: 200000).")
+        return
+
+    await state.update_data(price=price)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, передать с договором", callback_data="confirm_genplan_sign:yes"),
+        InlineKeyboardButton(text="❌ Нет, без договора", callback_data="confirm_genplan_sign:no")
+    ]])
+
+    await message.answer("📄 Передать документ для подписи генпланисту?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("confirm_genplan_sign:"))
+async def handle_confirm_genplan_sign(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
+    data = await state.get_data()
+
+    order_id = data["order_id"]
+    description = data["description"]
+    deadline = data["deadline"]
+    days = data["days"]
+    price = data["price"]
 
     order = await get_order_by_id(order_id)
-    order_title = order["title"]
-    genplan = await get_specialist_by_section("гп")
-    genplan_name = genplan.get("full_name", "Без имени")
-    if not genplan:
-        await message.answer("❗ Генпланист не найден.")
+    specialist = await get_specialist_by_section("гп")
+
+    if not specialist:
+        await callback.message.answer("❗ Генпланист не найден.")
         await state.clear()
         return
 
+    # создаём задачу
     await create_task(
         order_id=order_id,
         section="гп",
-        specialist_id=genplan["telegram_id"],
+        specialist_id=specialist["telegram_id"],
         description=description,
         deadline=deadline,
-        status="assigned"
+        status="назначено"
     )
 
-    await send_project_files(order_title, genplan["telegram_id"], message.bot, "гп")
+    # отправляем проектные файлы
+    await send_project_files(order["title"], specialist["telegram_id"], callback.message.bot, "гп")
 
-    await message.answer(
-    f"✅ Задание по разделу <b>Генплан</b> передано генпланисту {genplan_name} со сроком {days} дн.",
-    parse_mode="HTML"
-)
+    # реквизиты
+    contractor = {
+        "name": specialist.get("full_name", "—"),
+        "bin": specialist.get("iin", "—"),
+        "address": specialist.get("address", "—"),
+        "bank": specialist.get("bank", "—"),
+        "iban": specialist.get("iban", "—"),
+        "bik": specialist.get("bik", "—"),
+        "kbe": specialist.get("kbe", "19"),
+        "email": specialist.get("email", "—"),
+        "phone": specialist.get("phone", "—"),
+    }
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
+
+    # договор (если выбрано "Да")
+    if choice == "yes":
+        contract_path = await generate_contract(
+            order_id, "гп", order["title"], description, deadline, contractor, price
+        )
+        await callback.message.bot.send_document(
+            chat_id=specialist["telegram_id"],
+            document=FSInputFile(contract_path),
+            caption="📑 Договор на выполнение работ (ГП)",
+            parse_mode="HTML"
+        )
+        await callback.message.answer("📑 Договор сформирован и отправлен генпланисту ✅")
+    else:
+        await callback.message.answer("✅ Задача передана без договора генпланисту.")
+
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve_genplan:"))

@@ -24,13 +24,39 @@ async def connect_db():
     pool = await asyncpg.create_pool(**DB_CONFIG)
 
 # Добавление пользователя в базу данных
-async def add_user(telegram_id: int, full_name: str, iin: str, role: str):
+async def add_user(
+    telegram_id: int,
+    full_name: str,
+    iin: str,
+    role: str,
+    address: str = None,
+    bank: str = None,
+    iban: str = None,
+    bik: str = None,
+    kbe: str = "19",
+    email: str = None,
+    phone: str = None
+):
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO users (telegram_id, full_name, iin, role)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (telegram_id) DO NOTHING
-        """, telegram_id, full_name, iin, role)
+            INSERT INTO users (
+                telegram_id, full_name, iin, role,
+                address, bank, iban, bik, kbe, email, phone
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (telegram_id) DO UPDATE SET
+                full_name = EXCLUDED.full_name,
+                iin = EXCLUDED.iin,
+                role = EXCLUDED.role,
+                address = EXCLUDED.address,
+                bank = EXCLUDED.bank,
+                iban = EXCLUDED.iban,
+                bik = EXCLUDED.bik,
+                kbe = EXCLUDED.kbe,
+                email = EXCLUDED.email,
+                phone = EXCLUDED.phone
+        """, telegram_id, full_name, iin, role,
+             address, bank, iban, bik, kbe, email, phone)
 
 async def get_user_by_telegram_id(telegram_id: int):
     async with pool.acquire() as conn:
@@ -815,9 +841,11 @@ async def get_upcoming_executor_deadlines():
                 te.deadline,
                 te.status,
                 te.executor_id,
-                o.title
+                o.title,
+                t.section
             FROM task_executors te
             JOIN orders o ON te.order_id = o.id
+            JOIN tasks t ON te.task_id = t.id
             WHERE te.deadline IS NOT NULL
               AND te.status != 'Готово'
         """)
@@ -833,7 +861,8 @@ async def get_upcoming_specialist_deadlines():
                 t.deadline,
                 t.status,
                 t.specialist_id,
-                t.section
+                t.section,
+                t.order_id
             FROM tasks t
             WHERE t.deadline IS NOT NULL
               AND t.status != 'Сделано'
@@ -1577,3 +1606,38 @@ async def get_order_document_url(order_id: int):
             WHERE id = $1
         """, order_id)
         return dict(row) if row else None
+
+
+# database.py
+async def get_completed_tasks_by_specialist_id(specialist_id: int, section: str):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT t.*, o.title, o.description 
+            FROM tasks t
+            JOIN orders o ON o.id = t.order_id
+            WHERE t.specialist_id = $1
+              AND t.section = $2
+              AND t.status = 'completed'
+            ORDER BY t.created_at DESC
+        """, specialist_id, section)
+        return [dict(row) for row in rows]
+    
+    
+async def add_bonus_penalty(telegram_id: int, task_id: int, type: str, description: str):
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # ищем user_id по telegram_id
+            row = await conn.fetchrow("""
+                SELECT id FROM users WHERE telegram_id = $1
+            """, telegram_id)
+
+            if not row:
+                raise ValueError(f"❌ User with telegram_id={telegram_id} not found in users")
+
+            internal_user_id = row["id"]
+
+            # вставляем бонус/штраф
+            await conn.execute("""
+                INSERT INTO bonuses_penalties (user_id, task_id, type, description)
+                VALUES ($1, $2, $3, $4)
+            """, internal_user_id, task_id, type, description)

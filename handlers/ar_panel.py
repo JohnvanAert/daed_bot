@@ -2,13 +2,13 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Document
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_ar_executor_by_task_executor_id, save_ar_file_path_to_tasks
+from database import get_orders_by_specialist_id, get_order_by_id, get_available_ar_executors, assign_ar_executor_to_order, get_ar_executors_by_order, get_executors_for_order, update_task_for_executor, get_unassigned_executors, assign_executor_to_ar, get_user_by_id, get_user_by_telegram_id, count_executors_for_order, get_task_executor_id , get_ar_executor_by_task_executor_id, save_ar_file_path_to_tasks, get_completed_tasks_by_specialist_id
 import os
 from datetime import datetime, date, timedelta
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram import Bot
 import re
-
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 class GiveTaskARFSM(StatesGroup):
     waiting_for_comment = State()
     waiting_for_deadline = State()
@@ -36,6 +36,35 @@ def get_gip_review_keyboard(order_id: int) -> InlineKeyboardMarkup:
     ])
 
 @router.message(F.text == "📄 Мои задачи")
+async def ar_tasks_menu(message: Message):
+    kb = ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        keyboard=[
+            [KeyboardButton(text="📄 Текущие задачи (АР)")],
+            [KeyboardButton(text="📁 Завершённые задачи (АР)")],
+            [KeyboardButton(text="🔙 Назад в меню")]
+        ]
+    )
+    await message.answer("Выберите тип задач по АР:", reply_markup=kb)
+
+@router.message(F.text == "📁 Завершённые задачи (АР)")
+async def show_completed_ar_orders(message: Message):
+
+    orders = await get_completed_tasks_by_specialist_id(message.from_user.id, "ар")
+
+    if not orders:
+        await message.answer("📭 У вас нет завершённых задач.")
+        return
+
+    for order in orders:
+        caption = (
+            f"✅ <b>{order['title']}</b>\n"
+            f"📝 {order['description']}\n"
+            f"📅 Завершено: {order['updated_at'].strftime('%Y-%m-%d %H:%M')}"
+        )
+        await message.answer(caption, parse_mode="HTML")
+
+@router.message(F.text == "📄 Текущие задачи (АР)")
 async def show_ar_orders(message: Message):
     orders = await get_orders_by_specialist_id(message.from_user.id, section="ар")
 
